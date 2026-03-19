@@ -1,0 +1,2 @@
+"""GUI panels package."""
+

@@ -1,0 +1,20 @@
+LAMMPS Description
+
+3 atoms
+
+0 10 xlo xhi
+0 10 ylo yhi
+0 10 zlo zhi
+
+Masses
+
+0 1.0
+1 1.0
+2 1.0
+
+Atoms # bond
+
+0 0 0 1.0 1.0 1.0
+1 0 1 2.0 2.0 2.0
+2 0 2 3.0 3.0 3.0
+
