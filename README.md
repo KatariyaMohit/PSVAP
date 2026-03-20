@@ -7,7 +7,7 @@ and provides a Python-first, plugin-ready environment for analysis and visualiza
 
 This README covers:
 
-- High-level folder structure
+- Folder structure
 - Full setup and run instructions
 
 ## Folder Structure 
