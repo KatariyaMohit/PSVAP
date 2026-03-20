@@ -117,7 +117,17 @@ pip install -r requirements-dev.txt
 
 ```bash
 conda activate psvap
+cd ..
 python PSVAP\main.py
+```
+
+---
+
+```bash
+Whenever you run the project always run
+conda activate psvap
+and then 
+python PSVAP\main.py  (Make sure you are in root folder C:\Users\username\Software Project)
 ```
 
 ---
