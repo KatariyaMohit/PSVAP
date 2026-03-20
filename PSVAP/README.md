@@ -1,67 +1,199 @@
-PSVAP — Particle Simulation Visualization & Analysis Package
-===========================================================
-
-This repository implements the PSVAP desktop application as defined in the
-`PSVAP_Master_Plan` (Software Development Master Plan, v1.0).
+# PSVAP — Particle Simulation Visualization & Analysis Package
 
 PSVAP is a post-simulation analysis and visualization tool for particle-based
 molecular dynamics data. It is **not** a simulation engine. It reads trajectory
 and structure files from external engines (LAMMPS, GROMACS, AMBER, CHARMM, etc.)
-and provides a Python-first, plugin-ready environment for analysis and
-visualization.
+and provides a Python-first, plugin-ready environment for analysis and visualization.
 
-The authoritative source of truth for architecture, modules, dependencies, and
-development phases is the Master Plan document. This README only summarizes:
+This README covers:
 
-- Project purpose and scope
 - High-level folder structure
-- Basic setup and run instructions
+- Full setup and run instructions
 
-Project Purpose
----------------
-
-- High cohesion, low coupling across clearly separated layers.
-- Python-first implementation of all scientific and application logic.
-- Extensible analysis and modeling via a safe Python plugin sandbox.
-- Research-grade reliability with validated calculations.
-- Cross-platform desktop application targeting Windows 10/11 and Ubuntu 22.04+.
-
-Folder Structure (Planned)
---------------------------
+## Folder Structure 
 
 At the top level:
 
-- `main.py` — entry point; starts the Qt application only.
-- `README.md` — this summary.
-- `CHANGELOG.md` — living changelog; update every significant change.
-- `INSTALL.md` — setup instructions for new developers.
-- `requirements.txt` — pinned runtime dependencies.
-- `requirements-dev.txt` — testing and linting dependencies.
-- `pyproject.toml` — package metadata and build configuration.
-- `app/` — application controller layer.
-- `core/` — core data layer, including `SystemModel`.
-- `io/` — parsers, exporters, and external engine integration.
-- `visualization/` — visualization engine wrapping PyVista.
-- `analysis/` — scientific analysis modules.
-- `modeling/` — structure modification and MD setup tools.
-- `plugins/` — Python plugin sandbox and public API.
-- `gui/` — PySide6 GUI layer.
-- `tests/` — automated tests and fixtures.
-- `docs/` — documentation and diagrams.
+| Path                   | Description                                              |
+|------------------------|----------------------------------------------------------|
+| `main.py`              | Entry point; starts the Qt application only.             |
+| `README.md`            | This summary.                                            |
+| `CHANGELOG.md`         | Living changelog; update every significant change.       |
+| `INSTALL.md`           | Setup instructions for new developers.                   |
+| `requirements.txt`     | Pinned runtime dependencies.                             |
+| `requirements-dev.txt` | Testing and linting dependencies.                        |
+| `pyproject.toml`       | Package metadata and build configuration.                |
+| `app/`                 | Application controller layer.                            |
+| `core/`                | Core data layer, including `SystemModel`.                |
+| `io/`                  | Parsers, exporters, and external engine integration.     |
+| `visualization/`       | Visualization engine wrapping PyVista.                   |
+| `analysis/`            | Scientific analysis modules.                             |
+| `modeling/`            | Structure modification and MD setup tools.               |
+| `plugins/`             | Python plugin sandbox and public API.                    |
+| `gui/`                 | PySide6 GUI layer.                                       |
+| `tests/`               | Automated tests and fixtures.                            |
+| `docs/`                | Documentation and diagrams.                              |
 
-For full details, refer to Section 3 (Complete Project Folder Structure) of the
-Master Plan.
 
-Quick Start (Summary)
----------------------
+---
 
-1. Create and activate a Python 3.11 environment (Conda recommended).
-2. Install RDKit from `conda-forge`.
-3. Install remaining Python dependencies from `requirements.txt`.
-4. Install developer tools from `requirements-dev.txt` (optional for development).
-5. Run `python main.py` from the repository root to launch the application.
+## Installation & Setup
 
-The exact commands, external tool checks, and supported CLI options are
-specified in Section 10 (Setup, Build & Run Instructions) of the Master Plan and
-must be kept in sync with this repository.
+### Prerequisites
 
+- Python 3.11 (recommended)
+- Git
+- Conda (Miniconda / Anaconda) — strongly recommended
+- C/C++ build toolchain:
+  - **Windows:** Visual Studio Build Tools (MSVC + CMake)
+  - **Linux:** `build-essential` (gcc, g++, make)
+
+---
+
+### Clone the Repository
+
+```bash
+git clone https://github.com/KatariyaMohit/PSVAP.git
+cd PSVAP
+```
+
+---
+
+### Environment Setup (IMPORTANT)
+
+> Always use **Anaconda Prompt** or a fresh terminal.
+
+#### Create Conda Environment
+
+```bash
+conda create -n psvap python=3.11
+```
+
+Press `y` when prompted.
+
+#### Activate Environment
+
+```bash
+conda activate psvap
+```
+
+You should see:
+
+```
+(psvap) C:\Users\username\Software Project\PSVAP>
+```
+
+---
+
+### Install Dependencies (Correct Order)
+
+> **IMPORTANT:** Install heavy libraries via `conda`, not `pip`
+
+#### Install Core Scientific & GUI Libraries
+
+```bash
+conda install -c conda-forge rdkit pyvista vtk pyvistaqt pyside6=6.6 qt=6.6
+```
+
+This ensures:
+- No DLL errors
+- Compatible Qt + VTK + PyVista stack
+
+#### Install Remaining Python Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+#### Install Developer Tools (Optional)
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+---
+
+### Run the Application
+
+```bash
+conda activate psvap
+python PSVAP\main.py
+```
+
+---
+
+## Important Notes (VERY IMPORTANT)
+
+Always follow this rule:
+
+| Library Type       | Install Using |
+|--------------------|---------------|
+| RDKit              | conda         |
+| PySide6 (Qt GUI)   | conda         |
+| VTK / PyVista      | conda         |
+| Other Python libs  | pip           |
+
+### ❌ Avoid This (causes errors)
+
+Mixing `pip` and `conda` for:
+- PySide6
+- VTK
+- PyVista
+
+---
+
+## Common Errors & Fixes
+
+### `conda not recognized`
+- Add Miniconda to PATH
+- Restart terminal
+
+---
+
+### `No module named PySide6`
+
+```bash
+conda install -c conda-forge pyside6
+```
+
+---
+
+### `DLL load failed while importing QtWidgets`
+
+**Fix:**
+
+```bash
+pip uninstall PySide6 PySide6-Essentials PySide6-Addons -y
+conda remove pyside6 qt --force -y
+conda install -c conda-forge pyside6=6.6 qt=6.6
+```
+
+---
+
+### VTK / PyVista Import Errors
+
+```bash
+conda install -c conda-forge vtk pyvista pyvistaqt
+```
+
+---
+
+## Clean Reset (If Things Break)
+
+```bash
+conda remove -n psvap --all
+conda create -n psvap python=3.11
+conda activate psvap
+conda install -c conda-forge rdkit pyvista vtk pyvistaqt pyside6=6.6 qt=6.6
+pip install -r requirements.txt
+```
+
+---
+
+## Summary
+
+- ✅ Use `conda` for heavy dependencies
+- ✅ Use `pip` only for lightweight packages
+- ✅ Keep environment clean to avoid DLL issues
+
+---
