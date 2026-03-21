@@ -36,11 +36,11 @@ PSVAP is a post-simulation analysis and visualization tool for particle-based mo
 
 | Feature | Preview | Description |
 |---|---|---|
-| **Main Dashboard** | ![Main Dashboard](assets/Main_window.png) | The initial state of the PSVAP interface, featuring a dark-themed 3D viewport, syntax-driven selection panel, and playback timeline. |
-| **File Import** | ![File Import](assets/open_file.png) | Dual import modes: single file loading or split Topology + Trajectory loading for complex datasets. |
-| **Topology Selection** | ![Topology Selection](assets/open_Topology.png) | Step 1 of the loading process — selecting the structural foundation (`.pdb`, `.data`, `.lammpstrj`). |
-| **Trajectory Mapping** | ![Trajectory Mapping](assets/open_Trajectory.png) | Step 2 — linking the structural model to its corresponding movement data frames. |
-| **Loading State** | ![Loading Screen](assets/Loading_screen.png) | Real-time feedback during data parsing with a progress indicator and status console. |
+| **Main Dashboard** | ![Main Dashboard](PSVAP/assets/Main_window.png) | The initial state of the PSVAP interface, featuring a dark-themed 3D viewport, syntax-driven selection panel, and playback timeline. |
+| **File Import** | ![File Import](PSVAP/assets/open_file.png) | Dual import modes: single file loading or split Topology + Trajectory loading for complex datasets. |
+| **Topology Selection** | ![Topology Selection](PSVAP/assets/open_Topology.png) | Step 1 of the loading process — selecting the structural foundation (`.pdb`, `.data`, `.lammpstrj`). |
+| **Trajectory Mapping** | ![Trajectory Mapping](PSVAP/assets/open_Trajectory.png) | Step 2 — linking the structural model to its corresponding movement data frames. |
+| **Loading State** | ![Loading Screen](PSVAP/assets/Loading_screen.png) | Real-time feedback during data parsing with a progress indicator and status console. |
 
 </details>
 
@@ -57,11 +57,11 @@ PSVAP is a post-simulation analysis and visualization tool for particle-based mo
 
 | Feature | Preview | Description |
 |---|---|---|
-| **LAMMPS Integration** | ![LAMMPS](assets/loaded_Lammps.png) | A successful render of a LAMMPS simulation showing 8,000 atoms and 15,000 bonds with real-time frame/step metadata. |
-| **PDB Support** | ![PDB](assets/Loaded_PDB.png) | High-fidelity rendering of a Protein Data Bank structure (98,000 atoms) with element-specific color coding. |
-| **Hybrid Mode** | ![Bonds+Atoms](assets/Bonds+atoms.png) | The default render mode providing a detailed look at molecular interconnectivity and chemical topology. |
-| **Clean View** | ![Atoms Only](assets/Atoms_only.png) | A simplified render mode that removes bond lines to focus on spatial distribution and density gradients. |
-| **Syntax Filtering** | ![Filtered](assets/filtered.png) | Highlights the power of the selection engine (e.g., `element == N`) to isolate specific atom types for quantitative analysis. |
+| **LAMMPS Integration** | ![LAMMPS](PSVAP/assets/loaded_Lammps.png) | A successful render of a LAMMPS simulation showing 8,000 atoms and 15,000 bonds with real-time frame/step metadata. |
+| **PDB Support** | ![PDB](PSVAP/assets/Loaded_PDB.png) | High-fidelity rendering of a Protein Data Bank structure (98,000 atoms) with element-specific color coding. |
+| **Hybrid Mode** | ![Bonds+Atoms](PSVAP/assets/Bonds+atoms.png) | The default render mode providing a detailed look at molecular interconnectivity and chemical topology. |
+| **Clean View** | ![Atoms Only](PSVAP/assets/Atoms_only.png) | A simplified render mode that removes bond lines to focus on spatial distribution and density gradients. |
+| **Syntax Filtering** | ![Filtered](PSVAP/assets/filtered.png) | Highlights the power of the selection engine (e.g., `element == N`) to isolate specific atom types for quantitative analysis. |
 
 </details>
 
@@ -78,17 +78,17 @@ PSVAP is a post-simulation analysis and visualization tool for particle-based mo
 
 | Feature | Preview | Description |
 |---|---|---|
-| **Clustering** | ![Clustering](assets/analysis_cluster.png) | Group similar frames from a trajectory into distinct structural clusters based on cutoff distances. |
-| **Geometry** | ![Geometry](assets/analysis_geometry.png) | Interactively measure Bond Lengths, Bond Angles, and Dihedral Angles in real-time. |
-| **Stability (RMSD)** | ![RMSD](assets/analysis_RMSD.png) | Calculate Root Mean Square Deviation to track structural variance over simulation time. |
-| **Alignment** | ![Alignment](assets/analysis_align.png) | Superimpose target and template structures to identify conformational changes. |
-| **Sequence Mapping** | ![Sequence](assets/analysis_sequence.png) | A 1D-to-3D bridge — click a residue name to instantly locate it in 3D space. |
-| **Surface Analysis** | ![Surface](assets/analysis_surface.png) | Generate Solvent Accessible Surface Area (SASA) maps to identify binding pockets and envelopes. |
-| **Ligand Focus** | ![Ligand](assets/analysis_ligand.png) | Automatically detect and center on small molecules bound within a protein environment. |
-| **QSAR Modeling** | ![QSAR](assets/analysis_QSAR.png) | Calculate molecular descriptors like LogP to link chemical structure to biological activity. |
-| **Pharmacophore** | ![Pharmacophore](assets/analysis_Pharma.png) | Identify interaction features like H-bond donors/acceptors as 3D geometric vectors. |
-| **Water Mapping** | ![Water Map](assets/analysis_water_map.png) | Track solvent behavior and identify high-occupancy hydration shells around the solute. |
-| **Pocket Prediction** | ![Sites](assets/analysis_sites.png) | Predict potential binding "hotspots" based on surface geometry and chemical properties. |
+| **Clustering** | ![Clustering](PSVAP/assets/analysis_cluster.png) | Group similar frames from a trajectory into distinct structural clusters based on cutoff distances. |
+| **Geometry** | ![Geometry](PSVAP/assets/analysis_geometry.png) | Interactively measure Bond Lengths, Bond Angles, and Dihedral Angles in real-time. |
+| **Stability (RMSD)** | ![RMSD](PSVAP/assets/analysis_RMSD.png) | Calculate Root Mean Square Deviation to track structural variance over simulation time. |
+| **Alignment** | ![Alignment](PSVAP/assets/analysis_align.png) | Superimpose target and template structures to identify conformational changes. |
+| **Sequence Mapping** | ![Sequence](PSVAP/assets/analysis_sequence.png) | A 1D-to-3D bridge — click a residue name to instantly locate it in 3D space. |
+| **Surface Analysis** | ![Surface](PSVAP/assets/analysis_surface.png) | Generate Solvent Accessible Surface Area (SASA) maps to identify binding pockets and envelopes. |
+| **Ligand Focus** | ![Ligand](PSVAP/assets/analysis_ligand.png) | Automatically detect and center on small molecules bound within a protein environment. |
+| **QSAR Modeling** | ![QSAR](PSVAP/assets/analysis_QSAR.png) | Calculate molecular descriptors like LogP to link chemical structure to biological activity. |
+| **Pharmacophore** | ![Pharmacophore](PSVAP/assets/analysis_Pharma.png) | Identify interaction features like H-bond donors/acceptors as 3D geometric vectors. |
+| **Water Mapping** | ![Water Map](PSVAP/assets/analysis_water_map.png) | Track solvent behavior and identify high-occupancy hydration shells around the solute. |
+| **Pocket Prediction** | ![Sites](PSVAP/assets/analysis_sites.png) | Predict potential binding "hotspots" based on surface geometry and chemical properties. |
 
 </details>
 
@@ -105,12 +105,12 @@ PSVAP is a post-simulation analysis and visualization tool for particle-based mo
 
 | Feature | Preview | Description |
 |---|---|---|
-| **System Prep** | ![System Prep](assets/model_prep.png) | Clean raw files by adding missing atoms, correcting bond orders, and assigning force fields. |
-| **Coarse-Graining** | ![Coarse-Graining](assets/model_cg.png) | Simplify large systems by mapping atom clusters into single "beads" for long-timescale runs. |
-| **Mutation Tool** | ![Mutation](assets/model_mutate.png) | Interactively swap amino acids and optimize side-chain orientations. |
-| **Alanine Scanning** | ![Ala Scan](assets/model_ala_scan.png) | Systematic mutagenesis to identify residues critical for protein stability or affinity. |
-| **Solvation** | ![Solvation](assets/model_solvate.png) | Place molecules in a water box and add counter-ions (Na⁺/Cl⁻) to reach target concentrations. |
-| **MD Setup** | ![MD Setup](assets/model_md_setup.png) | Define temperature, pressure, time steps, and production duration for the simulation engine. |
+| **System Prep** | ![System Prep](PSVAP/assets/model_prep.png) | Clean raw files by adding missing atoms, correcting bond orders, and assigning force fields. |
+| **Coarse-Graining** | ![Coarse-Graining](PSVAP/assets/model_cg.png) | Simplify large systems by mapping atom clusters into single "beads" for long-timescale runs. |
+| **Mutation Tool** | ![Mutation](PSVAP/assets/model_mutate.png) | Interactively swap amino acids and optimize side-chain orientations. |
+| **Alanine Scanning** | ![Ala Scan](PSVAP/assets/model_ala_scan.png) | Systematic mutagenesis to identify residues critical for protein stability or affinity. |
+| **Solvation** | ![Solvation](PSVAP/assets/model_solvate.png) | Place molecules in a water box and add counter-ions (Na⁺/Cl⁻) to reach target concentrations. |
+| **MD Setup** | ![MD Setup](PSVAP/assets/model_md_setup.png) | Define temperature, pressure, time steps, and production duration for the simulation engine. |
 
 </details>
 
@@ -127,10 +127,10 @@ PSVAP is a post-simulation analysis and visualization tool for particle-based mo
 
 | Feature | Preview | Description |
 |---|---|---|
-| **Dock Prep** | ![Dock Prep](assets/dock_prepare.png) | Assign Gasteiger charges and define flexible ligand torsions for docking. |
-| **Grid Box** | ![Grid Box](assets/dock_box.png) | Interactively define the 3D search space centered on the binding pocket. |
-| **Docking Engine** | ![Docking](assets/dock_dock.png) | Execute the docking search with adjustable exhaustiveness and algorithm selection. |
-| **Results Viewer** | ![Results](assets/dock_result.png) | Rank and inspect predicted binding poses by energy affinity (kcal/mol). |
+| **Dock Prep** | ![Dock Prep](PSVAP/assets/dock_prepare.png) | Assign Gasteiger charges and define flexible ligand torsions for docking. |
+| **Grid Box** | ![Grid Box](PSVAP/assets/dock_box.png) | Interactively define the 3D search space centered on the binding pocket. |
+| **Docking Engine** | ![Docking](PSVAP/assets/dock_dock.png) | Execute the docking search with adjustable exhaustiveness and algorithm selection. |
+| **Results Viewer** | ![Results](PSVAP/assets/dock_result.png) | Rank and inspect predicted binding poses by energy affinity (kcal/mol). |
 
 </details>
 
@@ -147,12 +147,12 @@ PSVAP is a post-simulation analysis and visualization tool for particle-based mo
 
 | Feature | Preview | Description |
 |---|---|---|
-| **Plugin Manager** | ![Plugins](assets/plugins.png) | Extend PSVAP with custom scripts and community-built analysis tools. |
-| **Settings** | ![Settings](assets/settings.png) | Customize UI scaling, GPU performance settings, and default file paths. |
-| **Publication Image** | ![Export Image](assets/export_image.png) | Export 4K, transparent-background figures for journals and posters. |
-| **Video Rendering** | ![Export Video](assets/export_video.png) | Record simulation trajectories into high-bitrate video files with custom FPS. |
-| **Data Export** | ![Export Data](assets/export_data.png) | Save filtered coordinates and analysis logs into CSV, JSON, or chemical formats. |
-| **Software Info** | ![About](assets/about.png) | Versioning, licensing, and citation info for scientific documentation. |
+| **Plugin Manager** | ![Plugins](PSVAP/assets/plugins.png) | Extend PSVAP with custom scripts and community-built analysis tools. |
+| **Settings** | ![Settings](PSVAP/assets/settings.png) | Customize UI scaling, GPU performance settings, and default file paths. |
+| **Publication Image** | ![Export Image](PSVAP/assets/export_image.png) | Export 4K, transparent-background figures for journals and posters. |
+| **Video Rendering** | ![Export Video](PSVAP/assets/export_video.png) | Record simulation trajectories into high-bitrate video files with custom FPS. |
+| **Data Export** | ![Export Data](PSVAP/assets/export_data.png) | Save filtered coordinates and analysis logs into CSV, JSON, or chemical formats. |
+| **Software Info** | ![About](PSVAP/assets/about.png) | Versioning, licensing, and citation info for scientific documentation. |
 
 </details>
 
