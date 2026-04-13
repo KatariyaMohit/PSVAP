@@ -78,11 +78,13 @@ class XYZParser(BaseParser):
             timesteps.append(_parse_timestep_from_comment(comment, i))
 
         box_bounds = _parse_lattice_from_comment(frames[0][2])
+        bonds = _build_bonds_from_positions(atoms, trajectory[0] if trajectory else np.array([]))
 
         metadata = SystemMetadata(
             source_path=path,
             box_bounds=box_bounds,
             timesteps=timesteps,
+            bonds=bonds,
         )
         return atoms, trajectory, metadata
 
@@ -204,3 +206,50 @@ def _parse_lattice_from_comment(comment: str) -> np.ndarray | None:
     except (ValueError, IndexError):
         pass
     return None
+
+
+def _build_bonds_from_positions(atoms: list[Atom], positions: np.ndarray) -> np.ndarray | None:
+    """
+    Infer bonds from atomic distances using van der Waals radii cutoff.
+    Returns PyVista line array format: [2,i,j, 2,i2,j2, ...]
+    """
+    if not atoms or len(atoms) < 2 or positions.size == 0:
+        return None
+    
+    try:
+        bonds_set: set[tuple[int, int]] = set()
+        
+        # Van der Waals radii (in Angstroms)
+        vdw_radii = {
+            "H": 1.20, "C": 1.70, "N": 1.55, "O": 1.52, "S": 1.80,
+            "P": 1.80, "F": 1.47, "CL": 1.75, "BR": 1.85, "I": 1.98,
+        }
+        
+        # Distance-based bond detection
+        for i in range(len(atoms)):
+            if i >= len(positions) - 1:
+                break
+            elem_i = atoms[i].element or "C"
+            r_i = vdw_radii.get(elem_i.upper(), 1.70)
+            
+            for j in range(i + 1, len(atoms)):
+                if (i, j) in bonds_set:
+                    continue
+                elem_j = atoms[j].element or "C"
+                r_j = vdw_radii.get(elem_j.upper(), 1.70)
+                
+                dist = np.linalg.norm(positions[i] - positions[j])
+                # Bond if distance is less than sum of vdw radii * 0.6
+                if dist < (r_i + r_j) * 0.6:
+                    bonds_set.add((i, j))
+        
+        # Convert to PyVista format
+        if bonds_set:
+            pyvista_bonds = []
+            for i, j in sorted(bonds_set):
+                pyvista_bonds.extend([2, i, j])
+            return np.array(pyvista_bonds, dtype=np.int64)
+        
+        return None
+    except Exception:
+        return None

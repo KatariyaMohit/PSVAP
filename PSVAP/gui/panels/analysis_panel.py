@@ -9,15 +9,19 @@ Phase 3 additions: INTERACT tab (Feature 12) and SURFACE tab (Feature 9/18).
 from __future__ import annotations
 
 import numpy as np
+from pathlib import Path
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QGridLayout,
     QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QScrollArea, QSpinBox, QTabWidget,
-    QTextEdit, QVBoxLayout, QWidget, QCheckBox,
+    QScrollArea, QSizePolicy, QSpinBox, QTabWidget,
+    QTextEdit, QVBoxLayout, QWidget, QCheckBox, QFileDialog,
+    QTableWidget, QTableWidgetItem,
 )
+from PySide6.QtGui import QGuiApplication, QColor
 
 from PSVAP.app.controller import ApplicationController
+from PSVAP.gui.widgets.plot_widget import PlotWidget
 
 # ── Theme ──────────────────────────────────────────────────────────────────
 BG        = "#111111"
@@ -103,6 +107,11 @@ class AnalysisPanel(QWidget):
     def __init__(self, *, controller: ApplicationController) -> None:
         super().__init__()
         self.controller = controller
+        
+        # Initialize interaction data storage
+        self._last_interaction_result = None
+        self._last_traj_data = None
+        
         self._build()
 
     # ── Safe SystemModel accessors ─────────────────────────────────────────
@@ -256,16 +265,24 @@ class AnalysisPanel(QWidget):
 
         layout.addWidget(_lbl("GEOMETRY MEASUREMENTS"))
         layout.addWidget(_divider())
+        
+        # Global clear button
+        clear_all_btn = _btn("CLEAR ALL HIGHLIGHTS")
+        clear_all_btn.clicked.connect(self._clear_all_highlights)
+        layout.addWidget(clear_all_btn)
+        layout.addWidget(_divider())
 
         layout.addWidget(_lbl("DISTANCE  ( atom i — atom j )", dim=True))
         gr = QGridLayout(); gr.setSpacing(8)
         self._dist_i = _input_line("atom index i"); gr.addWidget(self._dist_i, 0, 0)
         self._dist_j = _input_line("atom index j"); gr.addWidget(self._dist_j, 0, 1)
         self._dist_btn = _btn("MEASURE"); gr.addWidget(self._dist_btn, 0, 2)
+        self._dist_clear = _btn("RESET"); gr.addWidget(self._dist_clear, 0, 3)
         layout.addLayout(gr)
         self._dist_result = _result_box(80)
         layout.addWidget(self._dist_result)
         self._dist_btn.clicked.connect(self._run_distance)
+        self._dist_clear.clicked.connect(self._clear_distance)
 
         layout.addWidget(_divider())
 
@@ -275,10 +292,12 @@ class AnalysisPanel(QWidget):
         self._angle_j = _input_line("j"); ag.addWidget(self._angle_j, 0, 1)
         self._angle_k = _input_line("k"); ag.addWidget(self._angle_k, 0, 2)
         self._angle_btn = _btn("MEASURE"); ag.addWidget(self._angle_btn, 0, 3)
+        self._angle_clear = _btn("RESET"); ag.addWidget(self._angle_clear, 0, 4)
         layout.addLayout(ag)
         self._angle_result = _result_box(80)
         layout.addWidget(self._angle_result)
         self._angle_btn.clicked.connect(self._run_angle)
+        self._angle_clear.clicked.connect(self._clear_angle)
 
         layout.addWidget(_divider())
 
@@ -289,10 +308,12 @@ class AnalysisPanel(QWidget):
         self._tors_k = _input_line("k"); tg.addWidget(self._tors_k, 0, 2)
         self._tors_l = _input_line("l"); tg.addWidget(self._tors_l, 0, 3)
         self._tors_btn = _btn("MEASURE"); tg.addWidget(self._tors_btn, 0, 4)
+        self._tors_clear = _btn("RESET"); tg.addWidget(self._tors_clear, 0, 5)
         layout.addLayout(tg)
         self._tors_result = _result_box(80)
         layout.addWidget(self._tors_result)
         self._tors_btn.clicked.connect(self._run_torsion)
+        self._tors_clear.clicked.connect(self._clear_torsion)
 
         layout.addWidget(_divider())
 
@@ -316,7 +337,8 @@ class AnalysisPanel(QWidget):
         layout.addWidget(_lbl("RMSD / RMSF ANALYSIS"))
         layout.addWidget(_divider())
 
-        layout.addWidget(_lbl("RMSD VS TIME", dim=True))
+        # ── RMSD VS TIME (Reference frame approach) ──────────────────────────
+        layout.addWidget(_lbl("RMSD VS TIME (SAMPLED)", dim=True))
         rg = QHBoxLayout(); rg.setSpacing(8)
         rg.addWidget(_lbl("REF FRAME:", dim=True))
         self._rmsd_ref = QSpinBox()
@@ -335,25 +357,69 @@ class AnalysisPanel(QWidget):
 
         self._rmsd_btn = _btn("RUN RMSD")
         layout.addWidget(self._rmsd_btn)
-        self._rmsd_result = _result_box(160)
+        self._rmsd_result = _result_box(120)
         layout.addWidget(self._rmsd_result)
         self._rmsd_btn.clicked.connect(self._run_rmsd)
-
-        self._rmsd_all_btn = _btn("RMSD ALL FRAMES vs REF")
-        layout.addWidget(self._rmsd_all_btn)
-        self._rmsd_all_result = _result_box(160)
-        layout.addWidget(self._rmsd_all_result)
-        self._rmsd_all_btn.clicked.connect(self._compute_rmsd_all)
+        
+        # RMSD plot
+        self._rmsd_plot = PlotWidget()
+        self._rmsd_plot.setFixedHeight(300)
+        layout.addWidget(self._rmsd_plot)
+        
+        # Export button
+        rmsd_export_btn = _btn("EXPORT RMSD DATA (CSV)")
+        rmsd_export_btn.clicked.connect(self._export_rmsd_csv)
+        layout.addWidget(rmsd_export_btn)
 
         layout.addWidget(_divider())
+
+        # ── RMSD ALL FRAMES ──────────────────────────────────────────────────
+        layout.addWidget(_lbl("RMSD VS ALL FRAMES", dim=True))
+        self._rmsd_all_btn = _btn("COMPUTE RMSD ALL FRAMES")
+        layout.addWidget(self._rmsd_all_btn)
+        self._rmsd_all_result = _result_box(120)
+        layout.addWidget(self._rmsd_all_result)
+        self._rmsd_all_btn.clicked.connect(self._compute_rmsd_all)
+        
+        # RMSD all frames plot
+        self._rmsd_all_plot = PlotWidget()
+        self._rmsd_all_plot.setFixedHeight(300)
+        layout.addWidget(self._rmsd_all_plot)
+        
+        # Export button
+        rmsd_all_export_btn = _btn("EXPORT RMSD ALL DATA (CSV)")
+        rmsd_all_export_btn.clicked.connect(self._export_rmsd_all_csv)
+        layout.addWidget(rmsd_all_export_btn)
+
+        layout.addWidget(_divider())
+
+        # ── RMSF PER RESIDUE ─────────────────────────────────────────────────
         layout.addWidget(_lbl("RMSF PER RESIDUE / ATOM", dim=True))
         self._rmsf_btn = _btn("RUN RMSF")
         layout.addWidget(self._rmsf_btn)
-        self._rmsf_result = _result_box(160)
+        self._rmsf_result = _result_box(120)
         layout.addWidget(self._rmsf_result)
         self._rmsf_btn.clicked.connect(self._run_rmsf)
+        
+        # RMSF plot
+        self._rmsf_plot = PlotWidget()
+        self._rmsf_plot.setFixedHeight(300)
+        layout.addWidget(self._rmsf_plot)
+        
+        # Export button
+        rmsf_export_btn = _btn("EXPORT RMSF DATA (CSV)")
+        rmsf_export_btn.clicked.connect(self._export_rmsf_csv)
+        layout.addWidget(rmsf_export_btn)
 
         layout.addStretch()
+        
+        # Store raw data for plotting
+        self._rmsd_values = None
+        self._rmsd_all_frames = None
+        self._rmsd_all_values = None
+        self._rmsf_residues = None
+        self._rmsf_values = None
+        
         w.setWidget(inner); return w
 
     # ── Alignment tab ──────────────────────────────────────────────────────
@@ -427,6 +493,26 @@ class AnalysisPanel(QWidget):
         self._seq_extract_btn.clicked.connect(self._run_extract_sequences)
 
         layout.addWidget(_divider())
+        layout.addWidget(_lbl("VISUALIZE SEQUENCES IN 3D", dim=True))
+        
+        color_row = QHBoxLayout(); color_row.setSpacing(8)
+        self._seq_color_pos_btn = _btn("COLOR BY POSITION")
+        self._seq_color_type_btn = _btn("COLOR BY TYPE")
+        self._seq_clear_color_btn = _btn("CLEAR COLORS")
+        color_row.addWidget(self._seq_color_pos_btn)
+        color_row.addWidget(self._seq_color_type_btn)
+        color_row.addWidget(self._seq_clear_color_btn)
+        color_row.addStretch()
+        layout.addLayout(color_row)
+        
+        self._seq_color_result = _result_box(60)
+        layout.addWidget(self._seq_color_result)
+        
+        self._seq_color_pos_btn.clicked.connect(self._color_by_residue_position)
+        self._seq_color_type_btn.clicked.connect(self._color_by_residue_type)
+        self._seq_clear_color_btn.clicked.connect(self._clear_sequence_coloring)
+
+        layout.addWidget(_divider())
         layout.addWidget(_lbl("PAIRWISE ALIGNMENT", dim=True))
 
         mb = QHBoxLayout(); mb.setSpacing(8)
@@ -458,14 +544,27 @@ class AnalysisPanel(QWidget):
     # ── Interactions tab (Phase 3) ─────────────────────────────────────────
 
     def _build_interact_tab(self) -> QWidget:
-        w = QScrollArea(); w.setWidgetResizable(True); w.setFrameShape(QFrame.Shape.NoFrame)
-        inner = QWidget(); inner.setStyleSheet(f"background:{BG};")
-        layout = QVBoxLayout(inner); layout.setContentsMargins(16,16,16,16); layout.setSpacing(14)
-
-        layout.addWidget(_lbl("NON-COVALENT INTERACTIONS"))
-        layout.addWidget(_divider())
-
-        layout.addWidget(_lbl("ATOM GROUPS  (index range: 0-99 / comma list / 'all')", dim=True))
+        """Build the INTERACT tab with proper scrolling and sizing."""
+        
+        # Main scroll area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet(f"QScrollArea {{ background: {BG}; }}")
+        
+        # Inner container
+        inner = QWidget()
+        inner.setStyleSheet(f"background:{BG};")
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setContentsMargins(16, 16, 16, 16)
+        inner_layout.setSpacing(12)
+        
+        # ═══ HEADER ════════════════════════════════════════════════════════
+        inner_layout.addWidget(_lbl("NON-COVALENT INTERACTIONS"))
+        inner_layout.addWidget(_divider())
+        
+        # ═══ INPUTS ════════════════════════════════════════════════════════
+        inner_layout.addWidget(_lbl("ATOM GROUPS  (index range: 0-99 / comma list / 'all')", dim=True))
         gg = QGridLayout(); gg.setSpacing(8)
         gg.addWidget(_lbl("GROUP A:", dim=True), 0, 0)
         self._inter_group_a = _input_line("e.g. 0-399 or all")
@@ -473,9 +572,10 @@ class AnalysisPanel(QWidget):
         gg.addWidget(_lbl("GROUP B:", dim=True), 1, 0)
         self._inter_group_b = _input_line("e.g. 400-499")
         gg.addWidget(self._inter_group_b, 1, 1)
-        layout.addLayout(gg)
-
-        layout.addWidget(_lbl("INTERACTION TYPES", dim=True))
+        inner_layout.addLayout(gg)
+        
+        # ═══ CHECKBOXES ════════════════════════════════════════════════════
+        inner_layout.addWidget(_lbl("INTERACTION TYPES", dim=True))
         cb_row1 = QHBoxLayout(); cb_row1.setSpacing(16)
         self._cb_hbond  = _checkbox("H-BONDS",    checked=True)
         self._cb_salt   = _checkbox("SALT BRIDGES", checked=True)
@@ -484,8 +584,8 @@ class AnalysisPanel(QWidget):
         cb_row1.addWidget(self._cb_salt)
         cb_row1.addWidget(self._cb_clash)
         cb_row1.addStretch()
-        layout.addLayout(cb_row1)
-
+        inner_layout.addLayout(cb_row1)
+        
         cb_row2 = QHBoxLayout(); cb_row2.setSpacing(16)
         self._cb_halogen = _checkbox("HALOGEN",     checked=False)
         self._cb_hydro   = _checkbox("HYDROPHOBIC", checked=False)
@@ -494,24 +594,90 @@ class AnalysisPanel(QWidget):
         cb_row2.addWidget(self._cb_hydro)
         cb_row2.addWidget(self._cb_pistack)
         cb_row2.addStretch()
-        layout.addLayout(cb_row2)
-
+        inner_layout.addLayout(cb_row2)
+        
+        # ═══ DETECT BUTTON ═════════════════════════════════════════════════
         self._inter_btn = _btn("DETECT INTERACTIONS")
-        layout.addWidget(self._inter_btn)
-        self._inter_result = _result_box(180)
-        layout.addWidget(self._inter_result)
         self._inter_btn.clicked.connect(self._run_interactions)
-
-        layout.addWidget(_divider())
-        layout.addWidget(_lbl("INTERACTION PERSISTENCE OVER TRAJECTORY", dim=True))
-        self._inter_traj_btn = _btn("RUN OVER TRAJECTORY")
-        layout.addWidget(self._inter_traj_btn)
-        self._inter_traj_result = _result_box(160)
-        layout.addWidget(self._inter_traj_result)
+        inner_layout.addWidget(self._inter_btn)
+        
+        # ═══ SUMMARY CARDS ═════════════════════════════════════════════════
+        inner_layout.addWidget(_lbl("SUMMARY", dim=True))
+        summary_grid = QGridLayout(); summary_grid.setSpacing(10)
+        self._card_hbond = self._make_summary_card("H-BONDS", "0", "#00AAFF")
+        self._card_salt = self._make_summary_card("SALT BRIDGES", "0", "#FFFF00")
+        self._card_clash = self._make_summary_card("CLASHES", "0", "#FF4444")
+        self._card_hydro = self._make_summary_card("HYDROPHOBIC", "0", "#AAAAAA")
+        summary_grid.addWidget(self._card_hbond, 0, 0); summary_grid.addWidget(self._card_salt, 0, 1)
+        summary_grid.addWidget(self._card_clash, 1, 0); summary_grid.addWidget(self._card_hydro, 1, 1)
+        summary_grid.setColumnStretch(0, 1); summary_grid.setColumnStretch(1, 1)
+        inner_layout.addLayout(summary_grid)
+        
+        # ═══ INTERACTIONS TABLE ════════════════════════════════════════════
+        inner_layout.addWidget(_lbl("INTERACTIONS TABLE", dim=True))
+        self._inter_table = QTableWidget()
+        self._inter_table.setColumnCount(6)
+        self._inter_table.setHorizontalHeaderLabels(["Type", "Atom 1", "Atom 2", "Distance (Å)", "Angle (°)", "Extra"])
+        self._inter_table.setStyleSheet(f"QTableWidget {{ background:{PANEL_ALT}; color:{TEXT}; }}")
+        self._inter_table.setSortingEnabled(True)
+        # Allow table to expand in BOTH directions - KEY FIX
+        self._inter_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        inner_layout.addWidget(self._inter_table, 3)  # High stretch factor
+        
+        export_row = QHBoxLayout(); export_row.setSpacing(8)
+        self._inter_export_btn = _btn("EXPORT TABLE CSV")
+        self._inter_export_btn.clicked.connect(self._export_interactions_csv)
+        export_row.addWidget(self._inter_export_btn)
+        export_row.addStretch()
+        inner_layout.addLayout(export_row)
+        
+        inner_layout.addWidget(_divider())
+        
+        # ═══ TRAJECTORY ANALYSIS ═══════════════════════════════════════════
+        inner_layout.addWidget(_lbl("INTERACTION PERSISTENCE OVER TRAJECTORY", dim=True))
+        self._inter_traj_btn = _btn("ANALYZE TRAJECTORY")
+        inner_layout.addWidget(self._inter_traj_btn)
+        
+        self._inter_traj_plot = PlotWidget()
+        self._inter_traj_plot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        inner_layout.addWidget(self._inter_traj_plot, 2)  # High stretch factor
+        
+        self._inter_traj_export_btn = _btn("EXPORT PLOT DATA CSV")
+        self._inter_traj_export_btn.clicked.connect(self._export_traj_interactions_csv)
+        inner_layout.addWidget(self._inter_traj_export_btn)
+        
+        self._inter_traj_result = _result_box(80)
+        inner_layout.addWidget(self._inter_traj_result)
+        
         self._inter_traj_btn.clicked.connect(self._run_interactions_trajectory)
-
-        layout.addStretch()
-        w.setWidget(inner); return w
+        
+        # ═══ SETUP SCROLL AREA WITH PROPER EXPANSION ═══════════════════════
+        inner.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        scroll.setWidget(inner)
+        return scroll
+    
+    def _make_summary_card(self, title: str, count: str, color: str) -> QWidget:
+        """Create a styled summary card."""
+        card = QWidget()
+        card.setStyleSheet(f"""
+            QWidget {{
+                background: {PANEL_ALT};
+                border: 2px solid {color};
+                border-radius: 8px;
+                padding: 12px;
+            }}
+        """)
+        layout = QVBoxLayout(card); layout.setContentsMargins(8,8,8,8); layout.setSpacing(6)
+        lbl_title = QLabel(title)
+        lbl_title.setStyleSheet(f"color: {TEXT}; font-size: 10px; font-weight: bold;")
+        lbl_count = QLabel(count)
+        lbl_count.setStyleSheet(f"color: {color}; font-size: 18px; font-weight: bold;")
+        layout.addWidget(lbl_title)
+        layout.addWidget(lbl_count)
+        card.setMaximumHeight(90)
+        card.setMinimumHeight(85)
+        card._count_label = lbl_count
+        return card
 
     # ── Surface tab (Phase 3) ──────────────────────────────────────────────
 
@@ -600,10 +766,16 @@ class AnalysisPanel(QWidget):
             if warning:
                 txt += f"\n\n⚠  {warning}"
             self._dist_result.setText(txt)
+            
+            # Highlight measured atoms in visualization
+            self.controller.viz.highlight_measurement([i, j], 'distance')
+            
         except ImportError:
             d = float(np.linalg.norm(pos[j] - pos[i]))
             self._dist_result.setText(
                 f"DISTANCE  atom {i} — atom {j}\n  d = {d:.4f} Å")
+            # Highlight measured atoms in visualization
+            self.controller.viz.highlight_measurement([i, j], 'distance')
         except Exception as e:
             self._dist_result.setText(f"ERROR: {e}")
 
@@ -639,6 +811,10 @@ class AnalysisPanel(QWidget):
             if warning:
                 txt += f"\n\n⚠  {warning}"
             self._angle_result.setText(txt)
+            
+            # Highlight measured atoms in visualization
+            self.controller.viz.highlight_measurement([i, j, k], 'angle')
+            
         except ImportError:
             v1 = pos[i] - pos[j]
             v2 = pos[k] - pos[j]
@@ -646,6 +822,8 @@ class AnalysisPanel(QWidget):
             a = float(np.degrees(np.arccos(np.clip(cos_a, -1.0, 1.0))))
             self._angle_result.setText(
                 f"BOND ANGLE  atom {i} — atom {j} — atom {k}\n  θ = {a:.4f}°")
+            # Highlight measured atoms in visualization
+            self.controller.viz.highlight_measurement([i, j, k], 'angle')
         except Exception as e:
             self._angle_result.setText(f"ERROR: {e}")
 
@@ -687,6 +865,10 @@ class AnalysisPanel(QWidget):
             if warning:
                 txt += f"\n\n⚠  {warning}"
             self._tors_result.setText(txt)
+            
+            # Highlight measured atoms in visualization
+            self.controller.viz.highlight_measurement([i, j, k, l], 'torsion')
+            
         except ImportError:
             b0 = pos[i] - pos[j]; b1 = pos[k] - pos[j]; b2 = pos[l] - pos[k]
             b1_norm = b1 / (np.linalg.norm(b1) + 1e-12)
@@ -695,8 +877,30 @@ class AnalysisPanel(QWidget):
             t = float(np.degrees(np.arctan2(np.dot(np.cross(b1_norm, v), ww), np.dot(v, ww))))
             self._tors_result.setText(
                 f"TORSION  atom {i} — {j} — {k} — {l}\n  φ = {t:.4f}°")
+            # Highlight measured atoms in visualization
+            self.controller.viz.highlight_measurement([i, j, k, l], 'torsion')
         except Exception as e:
             self._tors_result.setText(f"ERROR: {e}")
+
+    @Slot()
+    def _clear_all_highlights(self) -> None:
+        """Clear all measurement highlights and restore full view."""
+        self.controller.viz.clear_measurement_highlight()
+
+    @Slot()
+    def _clear_distance(self) -> None:
+        """Clear distance measurement highlight."""
+        self.controller.viz.clear_measurement_highlight()
+
+    @Slot()
+    def _clear_angle(self) -> None:
+        """Clear angle measurement highlight."""
+        self.controller.viz.clear_measurement_highlight()
+
+    @Slot()
+    def _clear_torsion(self) -> None:
+        """Clear torsion measurement highlight."""
+        self.controller.viz.clear_measurement_highlight()
 
     @Slot()
     def _run_ramachandran(self) -> None:
@@ -734,6 +938,10 @@ class AnalysisPanel(QWidget):
                 self._rmsd_result.setText("NO DATA LOADED"); return
             ref = self._rmsd_ref.value()
             values = rmsd_trajectory(traj, reference_frame=ref)
+            
+            # Store raw data for export
+            self._rmsd_values = values
+            
             lines = [f"RMSD VS FRAME {ref}  ({len(values)} frames)\n"]
             step = max(1, len(values) // 20)
             for idx in range(0, len(values), step):
@@ -742,6 +950,9 @@ class AnalysisPanel(QWidget):
             lines.append(f"MEAN {values.mean():.4f} Å")
             lines.append(f"MAX  {values.max():.4f} Å")
             self._rmsd_result.setText("\n".join(lines))
+            
+            # Plot the data
+            self._plot_rmsd(values, ref)
         except Exception as e:
             self._rmsd_result.setText(f"ERROR: {e}")
 
@@ -763,25 +974,45 @@ class AnalysisPanel(QWidget):
                 def compute_rmsd(a, b):
                     diff = b - a
                     return float(np.sqrt(np.mean(np.sum(diff**2, axis=1))))
-            results = []
-            max_frames = min(n_frames, 50)
-            indices = np.linspace(0, n_frames - 1, max_frames, dtype=int)
-            for fi in indices:
-                pos = model.get_frame(int(fi))
+            
+            # Compute RMSD for all frames
+            all_frames = []
+            all_values = []
+            for fi in range(n_frames):
+                pos = model.get_frame(fi)
                 if pos is None: continue
                 cur = np.asarray(pos, dtype=np.float64)
                 if cur.shape == ref.shape:
                     r = compute_rmsd(ref, cur)
-                    results.append(f"  frame {fi:5d}  →  {r:.4f} Å")
+                    all_frames.append(fi)
+                    all_values.append(r)
+            
+            # Store raw data for export
+            self._rmsd_all_frames = np.array(all_frames)
+            self._rmsd_all_values = np.array(all_values)
+            
+            # Display sampled results
+            results = []
+            max_display = min(len(all_values), 50)
+            indices = np.linspace(0, len(all_values) - 1, max_display, dtype=int)
+            for i in indices:
+                fi = all_frames[i]
+                r = all_values[i]
+                results.append(f"  frame {fi:5d}  →  {r:.4f} Å")
+            
             if results:
+                stats = f"\nMIN  {np.array(all_values).min():.4f} Å\nMEAN {np.array(all_values).mean():.4f} Å\nMAX  {np.array(all_values).max():.4f} Å\nSTDEV {np.array(all_values).std():.4f} Å"
                 self._rmsd_all_result.setText(
-                    f"RMSD vs frame {ref_idx} (showing {len(results)} frames):\n" +
-                    "\n".join(results))
+                    f"RMSD vs frame {ref_idx} (all {len(all_values)} frames, showing {len(results)} sampled):\n" +
+                    "\n".join(results) + stats)
+                # Plot all data
+                self._plot_rmsd_all(all_frames, all_values, ref_idx)
             else:
                 self._rmsd_all_result.setText("No valid frames found.")
         except Exception as exc:
             self._rmsd_all_result.setText(f"ERROR: {exc}")
 
+    @Slot()
     @Slot()
     def _run_rmsf(self) -> None:
         try:
@@ -793,18 +1024,136 @@ class AnalysisPanel(QWidget):
             data = rmsf_per_residue(traj, atoms)
             if not data:
                 vals = rmsf(traj)
+                self._rmsf_residues = np.arange(len(vals))
+                self._rmsf_values = vals
                 lines = [f"RMSF PER ATOM  ({len(vals)} atoms)\n"]
                 step = max(1, len(vals) // 20)
                 for idx in range(0, len(vals), step):
                     lines.append(f"  atom {idx:>5} :  {vals[idx]:.4f} Å")
+                lines.append(f"\nMIN  {vals.min():.4f} Å")
+                lines.append(f"MEAN {vals.mean():.4f} Å")
+                lines.append(f"MAX  {vals.max():.4f} Å")
                 self._rmsf_result.setText("\n".join(lines))
+                self._plot_rmsf(np.arange(len(vals)), vals, "atoms")
                 return
+            
+            # Store data for export
+            residues = sorted(data.keys())
+            values = np.array([data[rid] for rid in residues])
+            self._rmsf_residues = np.array(residues)
+            self._rmsf_values = values
+            
             lines = [f"RMSF PER RESIDUE  ({len(data)} residues)\n"]
             for rid, val in list(sorted(data.items(), key=lambda x: -x[1]))[:30]:
                 lines.append(f"  residue {rid:>5} :  {val:.4f} Å")
+            lines.append(f"\nMIN  {values.min():.4f} Å")
+            lines.append(f"MEAN {values.mean():.4f} Å")
+            lines.append(f"MAX  {values.max():.4f} Å")
             self._rmsf_result.setText("\n".join(lines))
+            
+            # Plot the data
+            self._plot_rmsf(residues, values, "residues")
         except Exception as e:
             self._rmsf_result.setText(f"ERROR: {e}")
+
+    # ── Plotting methods ──────────────────────────────────────────────────
+
+    def _plot_rmsd(self, values: np.ndarray, ref: int) -> None:
+        """Plot RMSD vs frame."""
+        try:
+            x = np.arange(len(values))
+            self._rmsd_plot.plot_line(
+                x, values,
+                title=f"RMSD vs Frame {ref}",
+                xlabel="Frame",
+                ylabel="RMSD (Å)",
+                color="#00FF7F"
+            )
+        except Exception as e:
+            pass
+
+    def _plot_rmsd_all(self, frames: np.ndarray, values: np.ndarray, ref_idx: int) -> None:
+        """Plot RMSD vs all frames with statistics."""
+        try:
+            self._rmsd_all_plot.plot_line(
+                frames, values,
+                title=f"RMSD vs All Frames (Ref: {ref_idx})",
+                xlabel="Frame",
+                ylabel="RMSD (Å)",
+                color="#FF8000"
+            )
+        except Exception as e:
+            pass
+
+    def _plot_rmsf(self, residues, values: np.ndarray, label: str) -> None:
+        """Plot RMSF per residue/atom."""
+        try:
+            # Convert residue indices to strings for plotting
+            residue_labels = [str(r) for r in residues]
+            # For bar chart, limit to 50 residues for readability
+            if len(residues) > 50:
+                step = max(1, len(residues) // 50)
+                plot_labels = residue_labels[::step]
+                plot_values = values[::step]
+            else:
+                plot_labels = residue_labels
+                plot_values = values
+            
+            self._rmsf_plot.plot_bar(
+                plot_labels, plot_values,
+                title=f"RMSF per {label.capitalize()}",
+                ylabel="RMSF (Å)",
+                color="#FF00FF"
+            )
+        except Exception as e:
+            pass
+
+    # ── Export methods ───────────────────────────────────────────────────
+
+    def _export_rmsd_csv(self) -> None:
+        """Export RMSD data to CSV."""
+        if self._rmsd_values is None:
+            return
+        try:
+            path, _ = QFileDialog.getSaveFileName(None, "Export RMSD Data", "", "CSV Files (*.csv)")
+            if not path:
+                return
+            with open(path, 'w') as f:
+                f.write("Frame,RMSD_Angstrom\n")
+                for i, val in enumerate(self._rmsd_values):
+                    f.write(f"{i},{val:.6f}\n")
+        except Exception as e:
+            print(f"Export failed: {e}")
+
+    def _export_rmsd_all_csv(self) -> None:
+        """Export RMSD all frames data to CSV."""
+        if self._rmsd_all_frames is None or self._rmsd_all_values is None:
+            return
+        try:
+            path, _ = QFileDialog.getSaveFileName(None, "Export RMSD All Frames Data", "", "CSV Files (*.csv)")
+            if not path:
+                return
+            with open(path, 'w') as f:
+                f.write("Frame,RMSD_Angstrom\n")
+                for frame, val in zip(self._rmsd_all_frames, self._rmsd_all_values):
+                    f.write(f"{int(frame)},{val:.6f}\n")
+        except Exception as e:
+            print(f"Export failed: {e}")
+
+    def _export_rmsf_csv(self) -> None:
+        """Export RMSF data to CSV."""
+        if self._rmsf_residues is None or self._rmsf_values is None:
+            return
+        try:
+            path, _ = QFileDialog.getSaveFileName(None, "Export RMSF Data", "", "CSV Files (*.csv)")
+            if not path:
+                return
+            with open(path, 'w') as f:
+                f.write("Residue_ID,RMSF_Angstrom\n")
+                for rid, val in zip(self._rmsf_residues, self._rmsf_values):
+                    f.write(f"{int(rid)},{val:.6f}\n")
+        except Exception as e:
+            print(f"Export failed: {e}")
 
     @Slot()
     def _run_alignment(self) -> None:
@@ -935,6 +1284,49 @@ class AnalysisPanel(QWidget):
         except Exception as e:
             self._seq_result.setText(f"ERROR: {e}")
 
+    @Slot()
+    def _color_by_residue_position(self) -> None:
+        """Color atoms by their residue position with a gradient (blue→red)."""
+        try:
+            viz = self.controller.viz
+            if viz is None:
+                self._seq_color_result.setText("No visualization engine")
+                return
+            viz.set_sequence_coloring('residue_index')
+            self._seq_color_result.setText("✓ Coloring by residue position\n(Blue → Red)\nPosition 1 → Last residue")
+        except Exception as e:
+            self._seq_color_result.setText(f"ERROR: {e}")
+
+    @Slot()
+    def _color_by_residue_type(self) -> None:
+        """Color atoms by amino acid type (hydrophobic/polar/charged)."""
+        try:
+            viz = self.controller.viz
+            if viz is None:
+                self._seq_color_result.setText("No visualization engine")
+                return
+            viz.set_sequence_coloring('residue_type')
+            self._seq_color_result.setText(
+                "✓ Coloring by residue type\n"
+                "Yellow=Hydrophobic | Green=Polar\n"
+                "Blue=Positive | Red=Negative")
+        except Exception as e:
+            self._seq_color_result.setText(f"ERROR: {e}")
+
+    @Slot()
+    def _clear_sequence_coloring(self) -> None:
+        """Clear sequence-based coloring and return to default colors."""
+        try:
+            viz = self.controller.viz
+            if viz is None:
+                self._seq_color_result.setText("No visualization engine")
+                return
+            viz.clear_sequence_coloring()
+            self._seq_color_result.setText("✓ Colors cleared\nReturned to default view")
+        except Exception as e:
+            self._seq_color_result.setText(f"ERROR: {e}")
+
+
     # ──────────────────────────────────────────────────────────────────────
     #  Compute slots — Phase 3 NEW
     # ──────────────────────────────────────────────────────────────────────
@@ -943,103 +1335,227 @@ class AnalysisPanel(QWidget):
     def _run_interactions(self) -> None:
         """Detect all non-covalent interactions between group A and group B."""
         try:
+            print("[DEBUG] _run_interactions() called")
+            
             from PSVAP.analysis.interactions import detect_all_interactions
 
             atoms = self._get_atoms()
             pos   = self._get_positions()
             n     = self._get_atom_count()
+            
+            print(f"[DEBUG] atoms={atoms is not None and len(atoms) or 0}, pos={pos is not None and pos.shape or None}, n={n}")
 
             if n == 0 or pos is None:
-                self._inter_result.setText("NO DATA LOADED"); return
+                print("[DEBUG] No data loaded, clearing table")
+                self._inter_table.setRowCount(0)
+                return
 
             group_a = self._parse_index_range(self._inter_group_a.text(), n)
             group_b = self._parse_index_range(self._inter_group_b.text(), n)
+            
+            print(f"[DEBUG] group_a={group_a}, group_b={group_b}")
 
-            if group_a is None:
-                self._inter_result.setText(
-                    f"GROUP A: invalid range.\n"
-                    f"Use: '0-99', '0,1,2', or 'all'"); return
-            if group_b is None:
-                self._inter_result.setText(
-                    f"GROUP B: invalid range.\n"
-                    f"Use: '400-499', 'all'"); return
+            if group_a is None or group_b is None:
+                print("[DEBUG] Invalid groups, clearing table")
+                self._inter_table.setRowCount(0)
+                return
 
             if not group_a or not group_b:
-                self._inter_result.setText(
-                    "One or both groups are empty. Check index ranges."); return
+                print("[DEBUG] Empty groups, clearing table")
+                self._inter_table.setRowCount(0)
+                return
 
-            # Guard against computing interactions on LAMMPS files
-            # (no element info → H-bond/salt bridge detection is meaningless)
-            has_elements = any(
-                getattr(atoms[i], "element", None) for i in group_a[:10]
-            )
-
+            print(f"[DEBUG] Calling detect_all_interactions with {len(group_a)} vs {len(group_b)} atoms")
             result = detect_all_interactions(atoms, pos, group_a, group_b)
+            
+            print(f"[DEBUG] Result: hbonds={len(result.hbonds)}, salt_bridges={len(result.salt_bridges)}, clashes={len(result.clashes)}, hydrophobic={len(result.hydrophobic)}")
+            
+            # Store result for later use (visualization)
+            self._last_interaction_result = result
 
-            lines = [
-                f"INTERACTIONS  GROUP A ({len(group_a)} atoms) vs "
-                f"GROUP B ({len(group_b)} atoms)\n",
-                result.summary(),
-                "",
-            ]
-
-            if not has_elements:
-                lines.append(
-                    "NOTE: No element symbols found. H-bond and salt bridge\n"
-                    "detection requires element-labelled files (PDB/GRO/mmCIF).\n"
-                    "Clash detection works on any format.\n"
-                )
-
-            if result.hbonds and self._cb_hbond.isChecked():
-                lines.append(f"\nH-BONDS ({len(result.hbonds)}):")
-                for h in result.hbonds[:20]:
-                    lines.append(
-                        f"  donor {h.donor_idx} → acceptor {h.acceptor_idx} "
-                        f"  d={h.distance:.2f} Å"
-                        + (f"  θ={h.angle:.1f}°" if not np.isnan(h.angle) else "")
-                    )
-
-            if result.salt_bridges and self._cb_salt.isChecked():
-                lines.append(f"\nSALT BRIDGES ({len(result.salt_bridges)}):")
-                for s in result.salt_bridges[:10]:
-                    lines.append(
-                        f"  (+){s.pos_idx} ↔ (-){s.neg_idx}  d={s.distance:.2f} Å"
-                    )
-
-            if result.clashes and self._cb_clash.isChecked():
-                lines.append(f"\nCLASHES ({len(result.clashes)}):")
-                for c in sorted(result.clashes, key=lambda x: x.overlap, reverse=True)[:10]:
-                    lines.append(
-                        f"  atom {c.idx_a} ↔ atom {c.idx_b}"
-                        f"  d={c.distance:.2f} Å  overlap={c.overlap:.2f} Å"
-                    )
-
-            if result.hydrophobic and self._cb_hydro.isChecked():
-                lines.append(f"\nHYDROPHOBIC CONTACTS ({len(result.hydrophobic)}):")
-                for h in result.hydrophobic[:10]:
-                    lines.append(f"  atom {h.idx_a} ↔ atom {h.idx_b}  d={h.distance:.2f} Å")
-
-            if result.halogen_bonds and self._cb_halogen.isChecked():
-                lines.append(f"\nHALOGEN BONDS ({len(result.halogen_bonds)}):")
-                for h in result.halogen_bonds[:10]:
-                    lines.append(
-                        f"  halogen {h.halogen_idx} → acceptor {h.acceptor_idx}"
-                        f"  d={h.distance:.2f} Å"
-                    )
-
-            if result.pi_stacks and self._cb_pistack.isChecked():
-                lines.append(f"\nPI-STACKS ({len(result.pi_stacks)}):")
-                for p in result.pi_stacks[:10]:
-                    lines.append(f"  ring centroid distance: {p.distance:.2f} Å")
-
-            self._inter_result.setText("\n".join(lines))
+            # Update summary cards
+            print("[DEBUG] Updating summary cards...")
+            if hasattr(self, '_card_hbond') and hasattr(self._card_hbond, '_count_label'):
+                count = len(result.hbonds)
+                self._card_hbond._count_label.setText(str(count))
+                print(f"[DEBUG] Updated H-bonds card to: {count}")
+            else:
+                print("[DEBUG] _card_hbond not found or no _count_label")
+                
+            if hasattr(self, '_card_salt') and hasattr(self._card_salt, '_count_label'):
+                count = len(result.salt_bridges)
+                self._card_salt._count_label.setText(str(count))
+                print(f"[DEBUG] Updated salt bridges card to: {count}")
+                
+            if hasattr(self, '_card_clash') and hasattr(self._card_clash, '_count_label'):
+                count = len(result.clashes)
+                self._card_clash._count_label.setText(str(count))
+                print(f"[DEBUG] Updated clashes card to: {count}")
+                
+            if hasattr(self, '_card_hydro') and hasattr(self._card_hydro, '_count_label'):
+                count = len(result.hydrophobic)
+                self._card_hydro._count_label.setText(str(count))
+                print(f"[DEBUG] Updated hydrophobic card to: {count}")
+            
+            # Update table with interactions
+            print("[DEBUG] Populating interactions table...")
+            self._populate_interactions_table(result, atoms)
+            
+            # Visualize interactions in 3D
+            print("[DEBUG] Visualizing interactions...")
+            self._visualize_interactions(result, atoms, pos)
+            
+            print("[DEBUG] _run_interactions() completed successfully")
 
         except Exception as e:
-            self._inter_result.setText(f"ERROR: {e}")
+            print(f"ERROR in _run_interactions: {e}")
+            import traceback
+            traceback.print_exc()
+
+
+
+    def _populate_interactions_table(self, result, atoms) -> None:
+        """Populate the interactions table with data."""
+        try:
+            rows = []
+            
+            # H-bonds
+            if hasattr(result, 'hbonds') and result.hbonds:
+                for h in result.hbonds:
+                    if hasattr(self, '_cb_hbond') and not self._cb_hbond.isChecked():
+                        continue
+                    atom1_name = getattr(atoms[h.donor_idx], 'name', f'{h.donor_idx}')
+                    atom2_name = getattr(atoms[h.acceptor_idx], 'name', f'{h.acceptor_idx}')
+                    rows.append(["H-Bond", str(h.donor_idx), str(h.acceptor_idx), 
+                                f"{h.distance:.2f}", f"{h.angle:.1f}", ""])
+            
+            # Salt bridges
+            if hasattr(result, 'salt_bridges') and result.salt_bridges:
+                for s in result.salt_bridges:
+                    if hasattr(self, '_cb_salt') and not self._cb_salt.isChecked():
+                        continue
+                    pos_idx = s.positive_idx if hasattr(s, 'positive_idx') else (s.pos_idx if hasattr(s, 'pos_idx') else 0)
+                    neg_idx = s.negative_idx if hasattr(s, 'negative_idx') else (s.neg_idx if hasattr(s, 'neg_idx') else 0)
+                    rows.append(["Salt Bridge", str(pos_idx), str(neg_idx),
+                                f"{s.distance:.2f}", "—", ""])
+            
+            # Hydrophobic contacts
+            if hasattr(result, 'hydrophobic') and result.hydrophobic:
+                for h in result.hydrophobic:
+                    if hasattr(self, '_cb_hydro') and not self._cb_hydro.isChecked():
+                        continue
+                    idx_a = h.atom1_idx if hasattr(h, 'atom1_idx') else (h.idx_a if hasattr(h, 'idx_a') else 0)
+                    idx_b = h.atom2_idx if hasattr(h, 'atom2_idx') else (h.idx_b if hasattr(h, 'idx_b') else 0)
+                    rows.append(["Hydrophobic", str(idx_a), str(idx_b),
+                                f"{h.distance:.2f}", "—", ""])
+            
+            # Clashes
+            if hasattr(result, 'clashes') and result.clashes:
+                for c in result.clashes:
+                    if hasattr(self, '_cb_clash') and not self._cb_clash.isChecked():
+                        continue
+                    idx_a = c.atom1_idx if hasattr(c, 'atom1_idx') else (c.idx_a if hasattr(c, 'idx_a') else 0)
+                    idx_b = c.atom2_idx if hasattr(c, 'atom2_idx') else (c.idx_b if hasattr(c, 'idx_b') else 0)
+                    overlap = c.overlap if hasattr(c, 'overlap') else 0.0
+                    rows.append(["Clash ⚠", str(idx_a), str(idx_b),
+                                f"{c.distance:.2f}", "—", f"overlap {overlap:.2f}"])
+            
+            # Halogen bonds
+            if hasattr(result, 'halogen_bonds') and result.halogen_bonds:
+                for h in result.halogen_bonds:
+                    if hasattr(self, '_cb_halogen') and not self._cb_halogen.isChecked():
+                        continue
+                    rows.append(["Halogen", str(h.halogen_idx), str(h.acceptor_idx),
+                                f"{h.distance:.2f}", "—", ""])
+            
+            # Pi-stacks
+            if hasattr(result, 'pi_stacks') and result.pi_stacks:
+                for p in result.pi_stacks:
+                    if hasattr(self, '_cb_pistack') and not self._cb_pistack.isChecked():
+                        continue
+                    rows.append(["Pi-Stack", "—", "—",
+                                f"{p.distance:.2f}", "—", ""])
+            
+            # Sort by distance
+            rows.sort(key=lambda x: float(x[3]) if x[3] != "—" else 999)
+            
+            # Populate table
+            self._inter_table.setRowCount(len(rows))
+            for i, row in enumerate(rows):
+                for j, val in enumerate(row):
+                    item = QTableWidgetItem(val)
+                    item.setForeground(QColor(TEXT))
+                    self._inter_table.setItem(i, j, item)
+            
+            self._inter_table.resizeColumnsToContents()
+            print(f"Populated interaction table with {len(rows)} rows")
+
+        except Exception as e:
+            print(f"ERROR in _populate_interactions_table: {e}")
+            import traceback
+            traceback.print_exc()
+
+
+    def _visualize_interactions(self, result, atoms, positions) -> None:
+        """Highlight interactions in the 3D visualization."""
+        try:
+            viz = self.controller.viz
+            if viz is None:
+                return
+            
+            # Build visualization instruction dict
+            interactions_to_show = {
+                'hbonds': result.hbonds if self._cb_hbond.isChecked() else [],
+                'salt_bridges': result.salt_bridges if self._cb_salt.isChecked() else [],
+                'hydrophobic': result.hydrophobic if self._cb_hydro.isChecked() else [],
+                'clashes': result.clashes if self._cb_clash.isChecked() else [],
+                'halogen_bonds': result.halogen_bonds if self._cb_halogen.isChecked() else [],
+            }
+            
+            viz.visualize_interactions(interactions_to_show, positions)
+        except Exception as e:
+            print(f"Visualization error: {e}")
+
+    def _export_interactions_csv(self) -> None:
+        """Export interactions table to CSV."""
+        if not hasattr(self, '_last_interaction_result') or self._last_interaction_result is None:
+            return
+        
+        try:
+            path, _ = QFileDialog.getSaveFileName(None, "Export Interactions", "", "CSV Files (*.csv)")
+            if not path:
+                return
+            
+            result = self._last_interaction_result
+            with open(path, 'w') as f:
+                f.write("Type,Atom_1,Atom_2,Distance_Angstrom,Angle_Degrees,Extra\n")
+                
+                for h in result.hbonds:
+                    if self._cb_hbond.isChecked():
+                        f.write(f"H-Bond,{h.donor_idx},{h.acceptor_idx},{h.distance:.3f},{h.angle:.1f},\n")
+                
+                for s in result.salt_bridges:
+                    if self._cb_salt.isChecked():
+                        f.write(f"Salt Bridge,{s.pos_idx},{s.neg_idx},{s.distance:.3f},,\n")
+                
+                for h in result.hydrophobic:
+                    if self._cb_hydro.isChecked():
+                        f.write(f"Hydrophobic,{h.idx_a},{h.idx_b},{h.distance:.3f},,\n")
+                
+                for c in result.clashes:
+                    if self._cb_clash.isChecked():
+                        f.write(f"Clash,{c.idx_a},{c.idx_b},{c.distance:.3f},,overlap {c.overlap:.3f}\n")
+                
+                for h in result.halogen_bonds:
+                    if self._cb_halogen.isChecked():
+                        f.write(f"Halogen,{h.halogen_idx},{h.acceptor_idx},{h.distance:.3f},,\n")
+        except Exception as e:
+            print(f"Export error: {e}")
+
 
     @Slot()
     def _run_interactions_trajectory(self) -> None:
-        """Run interaction detection over all trajectory frames."""
+        """Run interaction detection over all trajectory frames and plot results."""
         try:
             from PSVAP.analysis.interactions import interactions_over_trajectory
 
@@ -1048,29 +1564,93 @@ class AnalysisPanel(QWidget):
             n     = self._get_atom_count()
 
             if not traj or n == 0:
-                self._inter_traj_result.setText("NO DATA LOADED"); return
+                self._inter_traj_result.setText("NO DATA LOADED")
+                return
 
             group_a = self._parse_index_range(self._inter_group_a.text(), n)
             group_b = self._parse_index_range(self._inter_group_b.text(), n)
 
             if group_a is None or group_b is None:
-                self._inter_traj_result.setText(
-                    "Set valid GROUP A and GROUP B ranges first."); return
+                self._inter_traj_result.setText("Set valid GROUP A and GROUP B ranges first.")
+                return
 
-            # Limit to 50 frames for performance
-            max_frames = min(len(traj), 50)
-            step = max(1, len(traj) // max_frames)
+            # Analyze frames
+            max_frames = min(len(traj), 100)
+            step = max(1, len(traj) // max_frames) if max_frames > 0 else 1
             sub_traj = traj[::step][:max_frames]
 
             data = interactions_over_trajectory(atoms, sub_traj, group_a, group_b)
-
-            from PSVAP.visualization.plot_renderer import PlotRenderer
-            self._inter_traj_result.setText(
-                PlotRenderer.interactions_to_text(data)
-            )
+            
+            # Store for export
+            self._last_traj_data = data
+            
+            # Plot trajectory data
+            self._plot_trajectory_interactions(data)
+            
+            # Summary
+            hbond_avg = np.mean(data.get('hbond_counts', [0])) if data.get('hbond_counts') else 0
+            salt_avg = np.mean(data.get('salt_counts', [0])) if data.get('salt_counts') else 0
+            summary = f"Analyzed {len(sub_traj)} frames\n"
+            summary += f"H-bonds: avg {hbond_avg:.1f} per frame\n"
+            summary += f"Salt bridges: avg {salt_avg:.1f} per frame"
+            self._inter_traj_result.setText(summary)
 
         except Exception as e:
             self._inter_traj_result.setText(f"ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _plot_trajectory_interactions(self, data: dict) -> None:
+        """Plot interaction counts over trajectory frames."""
+        try:
+            frames = data.get('frames', [])
+            hbond_counts = data.get('hbond_counts', [])
+            clash_counts = data.get('clash_counts', [])
+            
+            if not frames:
+                return
+            
+            x = np.array(frames)
+            
+            # Plot H-bonds as main line
+            if self._cb_hbond.isChecked() and hbond_counts:
+                self._inter_traj_plot.plot_line(
+                    x, np.array(hbond_counts), 
+                    title="Interactions Over Trajectory",
+                    xlabel="Frame", ylabel="Count",
+                    color="#00AAFF"
+                )
+                    
+        except Exception as e:
+            print(f"Plot error: {e}")
+
+    def _export_traj_interactions_csv(self) -> None:
+        """Export trajectory interaction data to CSV."""
+        if not hasattr(self, '_last_traj_data') or self._last_traj_data is None:
+            return
+        
+        try:
+            path, _ = QFileDialog.getSaveFileName(None, "Export Trajectory Interactions", "", "CSV Files (*.csv)")
+            if not path:
+                return
+            
+            data = self._last_traj_data
+            with open(path, 'w') as f:
+                frames = data.get('frames', [])
+                hbond_counts = data.get('hbond_counts', [])
+                salt_counts = data.get('salt_counts', [])
+                clash_counts = data.get('clash_counts', [])
+                hydro_counts = data.get('hydro_counts', [])
+                
+                f.write("Frame,H-Bonds,Salt-Bridges,Clashes,Hydrophobic\n")
+                for i, frame in enumerate(frames):
+                    f.write(f"{frame},{hbond_counts[i] if i < len(hbond_counts) else 0},"
+                           f"{salt_counts[i] if i < len(salt_counts) else 0},"
+                           f"{clash_counts[i] if i < len(clash_counts) else 0},"
+                           f"{hydro_counts[i] if i < len(hydro_counts) else 0}\n")
+        except Exception as e:
+            print(f"Export error: {e}")
+
 
     @Slot()
     def _run_sasa(self) -> None:

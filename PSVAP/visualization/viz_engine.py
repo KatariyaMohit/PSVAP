@@ -102,6 +102,13 @@ _ELEMENT_COLORS: dict[str, tuple] = {
 
 _SEL_COLOR = np.array([0.91, 1.00, 0.00], dtype=np.float32)  # neon yellow
 
+# Measurement highlight colors
+_MEASUREMENT_COLORS = {
+    'distance': np.array([0.00, 1.00, 0.50], dtype=np.float32),    # cyan/neon green
+    'angle': np.array([1.00, 0.50, 0.00], dtype=np.float32),       # orange
+    'torsion': np.array([1.00, 0.00, 1.00], dtype=np.float32),     # magenta/pink
+}
+
 
 def _atom_color(atom) -> tuple:
     """Return RGB colour for an atom — element-based if available, type-based otherwise."""
@@ -183,6 +190,16 @@ class VisualizationEngine(QObject):
         self._bond_array: np.ndarray | None = None    # PyVista line format
         self._current_positions: np.ndarray | None = None
         self._selection_mask: np.ndarray | None = None   # bool (N,) or None
+        
+        # Measurement highlighting
+        self._measurement_atoms: set[int] = set()   # atom indices in current measurement
+        self._measurement_type: str | None = None    # 'distance', 'angle', 'torsion'
+        
+        # Sequence-based coloring
+        self._sequence_color_mode: str | None = None   # 'residue_index', 'residue_type', or None
+        
+        # Interaction visualization
+        self._interaction_actors: dict = {}   # store actors for different interaction types
 
         self._connect_model()
 
@@ -415,40 +432,148 @@ class VisualizationEngine(QObject):
 
     
     def _effective_colors(self) -> np.ndarray:
-        """Compute per-atom colours accounting for current selection."""
+        """Compute per-atom colours accounting for selection, sequence coloring, and measurement highlights."""
         if self._base_colors is None:
             return np.full((self._n_atoms, 3), 0.6, dtype=np.float32)
 
         colors = self._base_colors.copy()
+        
+        # Apply sequence-based coloring if enabled
+        if self._sequence_color_mode == 'residue_index':
+            colors = self._get_residue_index_colors()
+        elif self._sequence_color_mode == 'residue_type':
+            colors = self._get_residue_type_colors()
+        
         mask = self._selection_mask
 
+        # Apply regular selection highlighting
         if mask is not None and len(mask) == self._n_atoms and np.any(mask):
             sel = np.asarray(mask, dtype=bool)
             # Dim unselected
             colors[~sel] = colors[~sel] * 0.20
             # Highlight selected
             colors[sel] = _SEL_COLOR
+        
+        # Apply measurement highlighting (takes precedence over selection)
+        if self._measurement_atoms and self._measurement_type in _MEASUREMENT_COLORS:
+            meas_color = _MEASUREMENT_COLORS[self._measurement_type]
+            for idx in self._measurement_atoms:
+                if 0 <= idx < self._n_atoms:
+                    colors[idx] = meas_color
 
         return colors
+
+    def _get_residue_index_colors(self) -> np.ndarray:
+        """Color atoms by their residue position with a blue→red gradient."""
+        colors = np.zeros((self._n_atoms, 3), dtype=np.float32)
+        
+        if not self._atoms_list:
+            return colors
+        
+        # Get unique residue IDs and create mapping
+        residue_ids = []
+        for atom in self._atoms_list:
+            rid = getattr(atom, 'residue_id', None)
+            if rid is not None and rid not in residue_ids:
+                residue_ids.append(rid)
+        
+        if not residue_ids:
+            return self._base_colors.copy() if self._base_colors is not None else colors
+        
+        n_residues = len(residue_ids)
+        
+        # Create gradient colors: blue (0,0,1) → red (1,0,0)
+        for i, atom in enumerate(self._atoms_list):
+            rid = getattr(atom, 'residue_id', None)
+            if rid in residue_ids:
+                idx = residue_ids.index(rid)
+                # Gradient: blue → cyan → green → yellow → red
+                t = idx / max(1, n_residues - 1)
+                if t < 0.25:
+                    # Blue → Cyan
+                    r = 0.0
+                    g = (t / 0.25)
+                    b = 1.0
+                elif t < 0.5:
+                    # Cyan → Green
+                    r = 0.0
+                    g = 1.0
+                    b = (0.5 - t) / 0.25
+                elif t < 0.75:
+                    # Green → Yellow
+                    r = (t - 0.5) / 0.25
+                    g = 1.0
+                    b = 0.0
+                else:
+                    # Yellow → Red
+                    r = 1.0
+                    g = (1.0 - t) / 0.25
+                    b = 0.0
+                colors[i] = [r, g, b]
+            else:
+                colors[i] = [0.6, 0.6, 0.6]
+        
+        return colors
+
+    def _get_residue_type_colors(self) -> np.ndarray:
+        """Color atoms by amino acid type: hydrophobic/polar/charged."""
+        colors = np.zeros((self._n_atoms, 3), dtype=np.float32)
+        
+        # Amino acid classification
+        hydrophobic = {'ALA', 'VAL', 'ILE', 'LEU', 'MET', 'PHE', 'TRP', 'PRO'}
+        polar = {'SER', 'THR', 'CYS', 'TYR', 'ASN', 'GLN'}
+        positive = {'LYS', 'ARG', 'HIS'}
+        negative = {'ASP', 'GLU'}
+        
+        # Colors: hydrophobic=yellow, polar=green, positive=blue, negative=red
+        colors_map = {
+            'hydrophobic': (1.0, 1.0, 0.0),   # yellow
+            'polar': (0.0, 1.0, 0.0),         # green
+            'positive': (0.0, 0.5, 1.0),      # blue
+            'negative': (1.0, 0.0, 0.0),      # red
+            'other': (0.7, 0.7, 0.7),         # grey
+        }
+        
+        for i, atom in enumerate(self._atoms_list):
+            resname = getattr(atom, 'resname', None)
+            if resname:
+                resname_up = resname.strip().upper()
+                if resname_up in hydrophobic:
+                    colors[i] = colors_map['hydrophobic']
+                elif resname_up in polar:
+                    colors[i] = colors_map['polar']
+                elif resname_up in positive:
+                    colors[i] = colors_map['positive']
+                elif resname_up in negative:
+                    colors[i] = colors_map['negative']
+                else:
+                    colors[i] = colors_map['other']
+            else:
+                colors[i] = colors_map['other']
+        
+        return colors
+
 
     def _effective_bonds(self) -> np.ndarray | None:
         """
         Return the bond line array filtered by current selection.
 
-        If no selection: return full bond_array.
+        If no selection and no measurement: return full bond_array.
         If selection active: return only bonds where BOTH endpoints selected.
+        If measurement active: also include bonds connecting measurement atoms.
         """
         if self._bond_array is None:
             return None
 
         mask = self._selection_mask
-        if mask is None or not np.any(mask):
+        has_selection = mask is not None and np.any(mask)
+        has_measurement = bool(self._measurement_atoms)
+
+        # If neither selection nor measurement, return all bonds
+        if not has_selection and not has_measurement:
             return self._bond_array
 
-        # Filter: only bonds where both atoms are selected
-        sel = np.asarray(mask, dtype=bool)
         arr = self._bond_array
-        # arr format: [2, i, j, 2, i2, j2, ...]
         n_bonds = len(arr) // 3
         filtered: list[int] = []
 
@@ -459,7 +584,15 @@ class VisualizationEngine(QObject):
             count = arr[base]   # always 2
             i = arr[base + 1]
             j = arr[base + 2]
-            if i < len(sel) and j < len(sel) and sel[i] and sel[j]:
+            
+            # Include bond if both atoms are selected OR if either atom is in measurement
+            include = False
+            if has_measurement and (i in self._measurement_atoms or j in self._measurement_atoms):
+                include = True
+            elif has_selection and i < len(mask) and j < len(mask) and mask[i] and mask[j]:
+                include = True
+            
+            if include:
                 filtered.extend([count, i, j])
 
         return np.array(filtered, dtype=int) if filtered else None
@@ -502,9 +635,14 @@ class VisualizationEngine(QObject):
 
     # ── Atom picking ───────────────────────────────────────────────────────
 
-    def _on_atom_picked(self, picked_point) -> None:
+    def get_atom_info_at_position(self, picked_point) -> dict | None:
+        """
+        Get atom information at a given 3D position.
+        Returns a dict with keys: 'index', 'atom', 'position', 'type_label'
+        or None if no atom found at position.
+        """
         if self._current_positions is None or picked_point is None:
-            return
+            return None
         try:
             pt = np.array(picked_point[:3], dtype=float)
             dists = np.linalg.norm(
@@ -512,24 +650,183 @@ class VisualizationEngine(QObject):
             )
             idx = int(np.argmin(dists))
             if idx >= len(self._atoms_list):
-                return
+                return None
 
             atom = self._atoms_list[idx]
-            pos  = self._current_positions[idx]
+            pos = self._current_positions[idx]
             elem = getattr(atom, 'element', None)
-            tid  = getattr(atom, 'type_id', 0)
-            rid  = getattr(atom, 'residue_id', None)
-            name = getattr(atom, 'name', None)
+            tid = getattr(atom, 'type_id', 0)
+            
+            # Type label: element symbol if available, otherwise type ID
+            type_label = elem.upper() if elem else f"TYPE {tid}"
+            
+            return {
+                'index': idx,
+                'atom': atom,
+                'position': pos,
+                'type_label': type_label
+            }
+        except Exception:
+            return None
 
-            # Label: element symbol if available, otherwise type ID
-            label = elem.upper() if elem else f"TYPE {tid}"
+    def highlight_measurement(self, atom_indices: list[int], measurement_type: str) -> None:
+        """
+        Highlight atoms involved in a measurement.
+        
+        Args:
+            atom_indices: List of atom indices involved in the measurement
+            measurement_type: 'distance', 'angle', or 'torsion'
+        """
+        if not atom_indices:
+            self.clear_measurement_highlight()
+            return
+        
+        self._measurement_atoms = set(atom_indices)
+        self._measurement_type = measurement_type
+        
+        if self._current_positions is not None:
+            self._rebuild_scene()
+
+    def clear_measurement_highlight(self) -> None:
+        """Clear the current measurement highlight."""
+        self._measurement_atoms.clear()
+        self._measurement_type = None
+        
+        if self._current_positions is not None:
+            self._rebuild_scene()
+
+    def set_sequence_coloring(self, mode: str | None) -> None:
+        """
+        Enable/disable sequence-based coloring of atoms.
+        
+        Args:
+            mode: 'residue_index' (gradient blue→red by position),
+                  'residue_type' (hydrophobic/polar/charged),
+                  or None to disable
+        """
+        self._sequence_color_mode = mode
+        if self._current_positions is not None:
+            self._rebuild_scene()
+
+    def clear_sequence_coloring(self) -> None:
+        """Disable sequence-based coloring and return to default colors."""
+        self._sequence_color_mode = None
+        if self._current_positions is not None:
+            self._rebuild_scene()
+
+    def visualize_interactions(self, interactions_dict: dict, positions: np.ndarray) -> None:
+        """
+        Visualize interactions as lines/highlights in 3D.
+        
+        Args:
+            interactions_dict: {
+                'hbonds': list[HBond],
+                'salt_bridges': list[SaltBridge],
+                'hydrophobic': list[HydrophobicContact],
+                'clashes': list[Clash],
+                ...
+            }
+            positions: (N, 3) array of atom positions
+        """
+        if self._plotter is None:
+            return
+        
+        try:
+            import pyvista as pv
+            
+            # Remove old interaction actors
+            for actor in self._interaction_actors.values():
+                try:
+                    self._plotter.remove_actor(actor)
+                except:
+                    pass
+            self._interaction_actors.clear()
+            
+            # H-bonds: cyan lines (slightly thicker)
+            if interactions_dict.get('hbonds'):
+                hbond_lines = []
+                for h in interactions_dict['hbonds']:
+                    p1 = positions[h.donor_idx]
+                    p2 = positions[h.acceptor_idx]
+                    hbond_lines.append([p1, p2])
+                
+                if hbond_lines:
+                    hbond_mesh = pv.PolyData(np.concatenate(hbond_lines).reshape(-1, 3))
+                    actor = self._plotter.add_mesh(hbond_mesh, color='cyan', line_width=2,
+                                                   render=False)
+                    self._interaction_actors['hbonds'] = actor
+            
+            # Salt bridges: yellow solid lines
+            if interactions_dict.get('salt_bridges'):
+                salt_lines = []
+                for s in interactions_dict['salt_bridges']:
+                    pos_idx = s.positive_idx if hasattr(s, 'positive_idx') else (s.pos_idx if hasattr(s, 'pos_idx') else 0)
+                    neg_idx = s.negative_idx if hasattr(s, 'negative_idx') else (s.neg_idx if hasattr(s, 'neg_idx') else 0)
+                    p1 = positions[pos_idx]
+                    p2 = positions[neg_idx]
+                    salt_lines.append([p1, p2])
+                
+                if salt_lines:
+                    salt_mesh = pv.PolyData(np.concatenate(salt_lines).reshape(-1, 3))
+                    actor = self._plotter.add_mesh(salt_mesh, color='yellow', line_width=2,
+                                                   render=False)
+                    self._interaction_actors['salt'] = actor
+            
+            # Hydrophobic: faint gray lines
+            if interactions_dict.get('hydrophobic'):
+                hydro_lines = []
+                for h in interactions_dict['hydrophobic']:
+                    idx_a = h.atom1_idx if hasattr(h, 'atom1_idx') else (h.idx_a if hasattr(h, 'idx_a') else 0)
+                    idx_b = h.atom2_idx if hasattr(h, 'atom2_idx') else (h.idx_b if hasattr(h, 'idx_b') else 0)
+                    p1 = positions[idx_a]
+                    p2 = positions[idx_b]
+                    hydro_lines.append([p1, p2])
+                
+                if hydro_lines:
+                    hydro_mesh = pv.PolyData(np.concatenate(hydro_lines).reshape(-1, 3))
+                    actor = self._plotter.add_mesh(hydro_mesh, color='gray', line_width=1,
+                                                   opacity=0.3, render=False)
+                    self._interaction_actors['hydrophobic'] = actor
+            
+            # Clashes: red highlights on problematic atoms
+            if interactions_dict.get('clashes'):
+                clash_indices = []
+                for c in interactions_dict['clashes']:
+                    idx_a = c.atom1_idx if hasattr(c, 'atom1_idx') else (c.idx_a if hasattr(c, 'idx_a') else 0)
+                    idx_b = c.atom2_idx if hasattr(c, 'atom2_idx') else (c.idx_b if hasattr(c, 'idx_b') else 0)
+                    clash_indices.extend([idx_a, idx_b])
+                
+                if clash_indices:
+                    clash_points = positions[np.unique(clash_indices)]
+                    clash_cloud = pv.PolyData(clash_points)
+                    actor = self._plotter.add_mesh(clash_cloud, color='red', point_size=12,
+                                                   render=False)
+                    self._interaction_actors['clashes'] = actor
+            
+            self._plotter.render()
+            
+        except Exception as e:
+            print(f"Interaction visualization error: {e}")
+
+    def _on_atom_picked(self, picked_point) -> None:
+        info = self.get_atom_info_at_position(picked_point)
+        if info is None:
+            return
+        try:
+            idx = info['index']
+            atom = info['atom']
+            pos = info['position']
+            type_label = info['type_label']
+            
+            rid = getattr(atom, 'residue_id', None)
+            name = getattr(atom, 'name', None)
 
             parts = [
                 f"IDX {idx}",
-                label,
+                type_label,
                 f"POS ({pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}) Å",
             ]
-            if name and name != label:
+            if name and name != type_label:
                 parts.append(f"NAME {name}")
             if rid is not None:
                 parts.append(f"MOL {rid}")

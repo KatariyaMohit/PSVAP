@@ -115,11 +115,13 @@ class PDBParser(BaseParser):
             timesteps.append(i)
 
         box_bounds = self._extract_cryst1_box(path)
+        bonds = self._build_bonds(atoms, models[0])
 
         metadata = SystemMetadata(
             source_path=path,
             box_bounds=box_bounds,
             timesteps=timesteps,
+            bonds=bonds,
         )
         return atoms, trajectory, metadata
 
@@ -171,6 +173,112 @@ class PDBParser(BaseParser):
                     )
                     atom_serial += 1
         return atoms
+
+    # ------------------------------------------------------------------ #
+    #  Bond inference from structure                                       #
+    # ------------------------------------------------------------------ #
+
+    def _build_bonds(self, atoms: list[Atom], model) -> np.ndarray | None:
+        """
+        Infer bonds from the structure using distance-based heuristics.
+        
+        For proteins, uses standard residue templates + backbone connectivity.
+        For other molecules, uses distance thresholds based on van der Waals radii.
+        
+        Returns PyVista line array format: [2,i,j, 2,i2,j2, ...]
+        """
+        if not atoms or len(atoms) < 2:
+            return None
+        
+        try:
+            # Build position array for distance calculations
+            positions = np.array([[a.x, a.y, a.z] for a in atoms], dtype=np.float64)
+            bonds_set: set[tuple[int, int]] = set()
+            
+            # Build residue templates for standard amino acids
+            _residue_bonds = {
+                "ALA": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB")],
+                "ARG": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "CG"), ("CG", "CD"), ("CD", "NE"), ("NE", "CZ"), ("CZ", "NH1"), ("CZ", "NH2")],
+                "ASN": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "CG"), ("CG", "OD1"), ("CG", "ND2")],
+                "ASP": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "CG"), ("CG", "OD1"), ("CG", "OD2")],
+                "CYS": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "SG")],
+                "GLN": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "CG"), ("CG", "CD"), ("CD", "OE1"), ("CD", "NE2")],
+                "GLU": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "CG"), ("CG", "CD"), ("CD", "OE1"), ("CD", "OE2")],
+                "GLY": [("N", "CA"), ("CA", "C"), ("C", "O")],
+                "HIS": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "CG"), ("CG", "ND1"), ("CG", "CD2"), ("ND1", "CE1"), ("CD2", "CE2"), ("CE1", "CE2")],
+                "ILE": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "CG1"), ("CB", "CG2"), ("CG1", "CD1")],
+                "LEU": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "CG"), ("CG", "CD1"), ("CG", "CD2")],
+                "LYS": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "CG"), ("CG", "CD"), ("CD", "CE"), ("CE", "NZ")],
+                "MET": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "CG"), ("CG", "SD"), ("SD", "CE")],
+                "PHE": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "CG"), ("CG", "CD1"), ("CG", "CD2"), ("CD1", "CE1"), ("CD2", "CE2"), ("CE1", "CZ"), ("CE2", "CZ")],
+                "PRO": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "CG"), ("CG", "CD"), ("CD", "N")],
+                "SER": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "OG")],
+                "THR": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "OG1"), ("CB", "CG2")],
+                "TRP": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "CG"), ("CG", "CD1"), ("CG", "CD2"), ("CD1", "NE1"), ("CD2", "CE2"), ("CD2", "CE3"), ("NE1", "CE2"), ("CE2", "CZ2"), ("CE3", "CZ3"), ("CZ2", "CH2"), ("CZ3", "CH2")],
+                "TYR": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "CG"), ("CG", "CD1"), ("CG", "CD2"), ("CD1", "CE1"), ("CD2", "CE2"), ("CE1", "CZ"), ("CE2", "CZ"), ("CZ", "OH")],
+                "VAL": [("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB"), ("CB", "CG1"), ("CB", "CG2")],
+                # Nucleotides
+                "DA": [("O5'", "C5'"), ("C5'", "C4'"), ("C4'", "O4'"), ("C4'", "C3'"), ("C3'", "O3'"), ("C3'", "C2'"), ("C2'", "C1'"), ("C1'", "O4'"), ("C1'", "N9"), ("N9", "C4"), ("N9", "C8"), ("C4", "C5"), ("C5", "C6"), ("C6", "N6"), ("C6", "N1"), ("N1", "C2"), ("C2", "N3"), ("N3", "C4"), ("C5", "N7"), ("N7", "C8")],
+                "DG": [("O5'", "C5'"), ("C5'", "C4'"), ("C4'", "O4'"), ("C4'", "C3'"), ("C3'", "O3'"), ("C3'", "C2'"), ("C2'", "C1'"), ("C1'", "O4'"), ("C1'", "N9"), ("N9", "C4"), ("N9", "C8"), ("C4", "C5"), ("C5", "C6"), ("C6", "O6"), ("C6", "N1"), ("N1", "C2"), ("C2", "N2"), ("C2", "N3"), ("N3", "C4"), ("C5", "N7"), ("N7", "C8")],
+                "DC": [("O5'", "C5'"), ("C5'", "C4'"), ("C4'", "O4'"), ("C4'", "C3'"), ("C3'", "O3'"), ("C3'", "C2'"), ("C2'", "C1'"), ("C1'", "O4'"), ("C1'", "N1"), ("N1", "C2"), ("N1", "C6"), ("C2", "O2"), ("C2", "N3"), ("N3", "C4"), ("C4", "N4"), ("C4", "C5"), ("C5", "C6")],
+                "DT": [("O5'", "C5'"), ("C5'", "C4'"), ("C4'", "O4'"), ("C4'", "C3'"), ("C3'", "O3'"), ("C3'", "C2'"), ("C2'", "C1'"), ("C1'", "O4'"), ("C1'", "N1"), ("N1", "C2"), ("N1", "C6"), ("C2", "O2"), ("C2", "N3"), ("N3", "C4"), ("C4", "O4"), ("C4", "C5"), ("C5", "C6"), ("C5", "C7")],
+            }
+            
+            # Van der Waals radii (in Angstroms) for common elements
+            _vdw_radii = {
+                "H": 1.20, "C": 1.70, "N": 1.55, "O": 1.52, "S": 1.80,
+                "P": 1.80, "F": 1.47, "CL": 1.75, "BR": 1.85, "I": 1.98,
+            }
+            
+            # Try residue-template-based bonds for proteins
+            for residue in model.get_residues():
+                res_name = residue.get_resname().strip().upper()
+                res_atoms = {atom.get_name().strip(): atom.get_serial_number()-1 for atom in residue.get_atoms()}
+                
+                if res_name in _residue_bonds:
+                    for atom1_name, atom2_name in _residue_bonds[res_name]:
+                        if atom1_name in res_atoms and atom2_name in res_atoms:
+                            i = res_atoms[atom1_name]
+                            j = res_atoms[atom2_name]
+                            if 0 <= i < len(atoms) and 0 <= j < len(atoms) and i != j:
+                                bonds_set.add((min(i, j), max(i, j)))
+            
+            # Add backbone C-N peptide bonds
+            for i in range(len(atoms) - 1):
+                if (atoms[i].name == "C" and atoms[i+1].name == "N" and
+                    atoms[i].residue_id != atoms[i+1].residue_id):
+                    dist = np.linalg.norm(positions[i] - positions[i+1])
+                    if dist < 1.8:  # Typical peptide bond length
+                        bonds_set.add((i, i+1))
+            
+            # Distance-based fallback for non-standard residues or molecules
+            for i in range(len(atoms)):
+                if i >= len(atoms) - 1:
+                    break
+                elem_i = atoms[i].element or "C"
+                r_i = _vdw_radii.get(elem_i, 1.70)
+                
+                for j in range(i + 1, len(atoms)):
+                    if (i, j) in bonds_set:
+                        continue
+                    elem_j = atoms[j].element or "C"
+                    r_j = _vdw_radii.get(elem_j, 1.70)
+                    
+                    dist = np.linalg.norm(positions[i] - positions[j])
+                    # Bond if distance is less than sum of vdw radii * 0.6 (typical bond cutoff)
+                    if dist < (r_i + r_j) * 0.6:
+                        bonds_set.add((min(i, j), max(i, j)))
+            
+            # Convert to PyVista format
+            if bonds_set:
+                pyvista_bonds = []
+                for i, j in sorted(bonds_set):
+                    pyvista_bonds.extend([2, i, j])
+                return np.array(pyvista_bonds, dtype=np.int64)
+            
+            return None
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------ #
     #  Position extraction                                                 #
