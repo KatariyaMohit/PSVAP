@@ -682,13 +682,27 @@ class AnalysisPanel(QWidget):
     # ── Surface tab (Phase 3) ──────────────────────────────────────────────
 
     def _build_surface_tab(self) -> QWidget:
-        w = QScrollArea(); w.setWidgetResizable(True); w.setFrameShape(QFrame.Shape.NoFrame)
-        inner = QWidget(); inner.setStyleSheet(f"background:{BG};")
-        layout = QVBoxLayout(inner); layout.setContentsMargins(16,16,16,16); layout.setSpacing(14)
-
-        layout.addWidget(_lbl("SOLVENT ACCESSIBLE SURFACE AREA (SASA)"))
-        layout.addWidget(_divider())
-
+        """Build the SURFACE tab with SASA visualization, patch classification, and plots."""
+        
+        # Main scroll area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet(f"QScrollArea {{ background: {BG}; }}")
+        
+        # Inner container
+        inner = QWidget()
+        inner.setStyleSheet(f"background:{BG};")
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setContentsMargins(16, 16, 16, 16)
+        inner_layout.setSpacing(14)
+        
+        # ═══ HEADER ════════════════════════════════════════════════════════
+        inner_layout.addWidget(_lbl("SOLVENT ACCESSIBLE SURFACE AREA (SASA)"))
+        inner_layout.addWidget(_divider())
+        
+        # ═══ SASA COMPUTATION ══════════════════════════════════════════════
+        inner_layout.addWidget(_lbl("SASA CALCULATION", dim=True))
         pg = QHBoxLayout(); pg.setSpacing(8)
         pg.addWidget(_lbl("PROBE RADIUS (Å):", dim=True))
         self._sasa_probe = QLineEdit("1.4")
@@ -698,29 +712,86 @@ class AnalysisPanel(QWidget):
             f"color:{TEXT}; padding:4px 8px; font-size:11px; }}")
         pg.addWidget(self._sasa_probe)
         pg.addStretch()
-        layout.addLayout(pg)
-
+        inner_layout.addLayout(pg)
+        
         self._sasa_btn = _btn("COMPUTE SASA")
-        layout.addWidget(self._sasa_btn)
-        self._sasa_result = _result_box(180)
-        layout.addWidget(self._sasa_result)
         self._sasa_btn.clicked.connect(self._run_sasa)
-
-        layout.addWidget(_divider())
-        layout.addWidget(_lbl("SURFACE PATCH CLASSIFICATION", dim=True))
-        layout.addWidget(_lbl(
+        inner_layout.addWidget(self._sasa_btn)
+        
+        self._sasa_result = _result_box(120)
+        inner_layout.addWidget(self._sasa_result)
+        
+        # ═══ SASA VISUALIZATION ON STRUCTURE ═══════════════════════════════
+        inner_layout.addWidget(_lbl("SASA COLOR MAP ON SURFACE (Red=Exposed, Blue=Buried)", dim=True))
+        self._sasa_colormap_btn = _btn("VISUALIZE SASA COLOR MAP")
+        self._sasa_colormap_btn.clicked.connect(self._visualize_sasa_colormap)
+        inner_layout.addWidget(self._sasa_colormap_btn)
+        
+        # ═══ SASA DISTRIBUTION PLOT ════════════════════════════════════════
+        inner_layout.addWidget(_lbl("SASA DISTRIBUTION HISTOGRAM", dim=True))
+        self._sasa_dist_plot = PlotWidget()
+        self._sasa_dist_plot.setFixedHeight(250)
+        inner_layout.addWidget(self._sasa_dist_plot)
+        
+        sasa_dist_export_btn = _btn("EXPORT SASA DISTRIBUTION (CSV)")
+        sasa_dist_export_btn.clicked.connect(self._export_sasa_distribution)
+        inner_layout.addWidget(sasa_dist_export_btn)
+        
+        inner_layout.addWidget(_divider())
+        
+        # ═══ RESIDUE SASA LINE PLOT ═══════════════════════════════════════
+        inner_layout.addWidget(_lbl("RESIDUE SASA LINE PLOT (By Residue Index)", dim=True))
+        self._sasa_line_plot = PlotWidget()
+        self._sasa_line_plot.setFixedHeight(250)
+        inner_layout.addWidget(self._sasa_line_plot)
+        
+        sasa_line_export_btn = _btn("EXPORT RESIDUE SASA (CSV)")
+        sasa_line_export_btn.clicked.connect(self._export_residue_sasa)
+        inner_layout.addWidget(sasa_line_export_btn)
+        
+        inner_layout.addWidget(_divider())
+        
+        # ═══ PATCH CLASSIFICATION ══════════════════════════════════════════
+        inner_layout.addWidget(_lbl("SURFACE PATCH CLASSIFICATION", dim=True))
+        inner_layout.addWidget(_lbl(
             "Classifies surface-exposed residues by character:\n"
-            "hydrophobic / positive / negative / polar",
+            "Hydrophobic (yellow) | Positive (blue) | Negative (red) | Polar (green)",
             hint=True))
-
+        
         self._patch_btn = _btn("CLASSIFY PATCHES")
-        layout.addWidget(self._patch_btn)
-        self._patch_result = _result_box(160)
-        layout.addWidget(self._patch_result)
         self._patch_btn.clicked.connect(self._run_patch_classification)
+        inner_layout.addWidget(self._patch_btn)
+        
+        self._patch_result = _result_box(120)
+        inner_layout.addWidget(self._patch_result)
+        
+        # ═══ PATCH VISUALIZATION ═══════════════════════════════════════════
+        inner_layout.addWidget(_lbl("PATCH COLOR OVERLAY ON STRUCTURE", dim=True))
+        self._patch_colormap_btn = _btn("VISUALIZE PATCH COLORING")
+        self._patch_colormap_btn.clicked.connect(self._visualize_patch_coloring)
+        inner_layout.addWidget(self._patch_colormap_btn)
+        
+        # ═══ PATCH HISTOGRAM ═══════════════════════════════════════════════
+        inner_layout.addWidget(_lbl("PATCH TYPE DISTRIBUTION", dim=True))
+        self._patch_hist_plot = PlotWidget()
+        self._patch_hist_plot.setFixedHeight(250)
+        inner_layout.addWidget(self._patch_hist_plot)
+        
+        patch_export_btn = _btn("EXPORT PATCH DATA (CSV)")
+        patch_export_btn.clicked.connect(self._export_patch_data)
+        inner_layout.addWidget(patch_export_btn)
+        
+        inner_layout.addStretch()
+        
+        # Store raw data for plotting
+        self._sasa_data = None         # Full SASA per atom
+        self._sasa_residues = None     # SASA per residue
+        self._patch_data = None        # Classification results
+        
+        inner.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        scroll.setWidget(inner)
+        return scroll
 
-        layout.addStretch()
-        w.setWidget(inner); return w
 
     # ──────────────────────────────────────────────────────────────────────
     #  Compute slots — Phase 2 (all preserved exactly)
@@ -1685,16 +1756,20 @@ class AnalysisPanel(QWidget):
             per_atom = compute_sasa(atoms, pos, probe_radius=probe)
             per_res  = sasa_per_residue(atoms, pos, probe_radius=probe)
 
+            # Store data for visualization and plotting
+            self._sasa_data = per_atom
+            self._sasa_residues = per_res
+
             total_sasa = sum(per_atom.values())
 
             lines = [
                 f"SASA  (probe radius = {probe:.2f} Å)\n",
-                f"TOTAL SASA : {total_sasa:.2f} Å²",
+                f"TOTAL SASA : {total_sasa:.2f} Ų",
                 f"ATOMS      : {len(per_atom)}",
                 f"RESIDUES   : {len(per_res)}",
                 "",
                 "TOP 20 MOST EXPOSED RESIDUES:",
-                f"{'RESID':>8}  {'SASA (Å²)':>12}",
+                f"{'RESID':>8}  {'SASA (Ų)':>12}",
                 "-" * 24,
             ]
 
@@ -1706,6 +1781,10 @@ class AnalysisPanel(QWidget):
                 lines.append(f"  ... {len(sorted_res)-20} more residues")
 
             self._sasa_result.setText("\n".join(lines))
+            
+            # Auto-generate plots
+            self._plot_sasa_distribution()
+            self._plot_residue_sasa()
 
         except Exception as e:
             self._sasa_result.setText(f"ERROR: {e}")
@@ -1745,6 +1824,9 @@ class AnalysisPanel(QWidget):
 
             patches = classify_surface_patches(atoms, pos, probe_radius=probe)
 
+            # Store for visualization
+            self._patch_data = patches
+
             if not patches:
                 self._patch_result.setText(
                     "NO SURFACE PATCHES FOUND\n"
@@ -1782,9 +1864,235 @@ class AnalysisPanel(QWidget):
                 lines.append("  (-): " + ", ".join(str(r) for r in sorted(neg_res)[:15]))
 
             self._patch_result.setText("\n".join(lines))
+            
+            # Auto-generate plot
+            self._plot_patch_histogram()
 
         except Exception as e:
             self._patch_result.setText(f"ERROR: {e}")
+
+    @Slot()
+    def _visualize_sasa_colormap(self) -> None:
+        """Visualize SASA on protein surface with red/blue color mapping."""
+        try:
+            if self._sasa_data is None:
+                # Compute SASA first
+                self._run_sasa()
+                if self._sasa_data is None:
+                    return
+            
+            atoms = self._get_atoms()
+            if not atoms or self._sasa_data is None:
+                return
+            
+            pos = self._get_positions()
+            if pos is None:
+                return
+            
+            # Create surface coloring based on SASA values
+            viz = self.controller.viz
+            if viz is None:
+                return
+            
+            # Normalize SASA values to 0-1 range for coloring
+            sasa_vals = list(self._sasa_data.values())
+            sasa_min = min(sasa_vals) if sasa_vals else 0
+            sasa_max = max(sasa_vals) if sasa_vals else 1
+            
+            # Color atoms: blue (low SASA) to red (high SASA)
+            for idx, sasa in self._sasa_data.items():
+                norm = (sasa - sasa_min) / (sasa_max - sasa_min) if sasa_max > sasa_min else 0
+                # Blue (0,0,1) to Red (1,0,0)
+                color = (norm, 0, 1 - norm)
+                viz.highlight_atom(idx, color=color)
+            
+            print(f"SASA color map applied: Blue=Buried (<{sasa_min:.2f}), Red=Exposed (>{sasa_max:.2f})")
+            
+        except Exception as e:
+            print(f"Error visualizing SASA: {e}")
+
+    @Slot()
+    def _plot_sasa_distribution(self) -> None:
+        """Plot histogram of SASA distribution."""
+        try:
+            if self._sasa_data is None:
+                return
+            
+            import numpy as np
+            sasa_vals = list(self._sasa_data.values())
+            
+            # Create bins for histogram
+            bins = np.linspace(min(sasa_vals), max(sasa_vals), 20)
+            hist, _ = np.histogram(sasa_vals, bins=bins)
+            bin_centers = (bins[:-1] + bins[1:]) / 2
+            
+            # Plot
+            self._sasa_dist_plot.plot_bar(
+                [f"{b:.1f}" for b in bin_centers],
+                hist,
+                title="SASA Distribution",
+                ylabel="Number of Atoms",
+                color="#00AAFF"
+            )
+            
+        except Exception as e:
+            print(f"Error plotting SASA distribution: {e}")
+
+    @Slot()
+    def _plot_residue_sasa(self) -> None:
+        """Plot SASA per residue by residue index."""
+        try:
+            if self._sasa_residues is None:
+                return
+            
+            import numpy as np
+            residues = sorted(self._sasa_residues.keys())
+            values = [self._sasa_residues[r] for r in residues]
+            
+            # Plot
+            self._sasa_line_plot.plot_line(
+                np.array(residues),
+                np.array(values),
+                title="Residue SASA",
+                xlabel="Residue Index",
+                ylabel="SASA (Ų)",
+                color="#FFFF00"
+            )
+            
+        except Exception as e:
+            print(f"Error plotting residue SASA: {e}")
+
+    @Slot()
+    def _visualize_patch_coloring(self) -> None:
+        """Visualize patch classification on protein structure."""
+        try:
+            if self._patch_data is None:
+                self._run_patch_classification()
+                if self._patch_data is None:
+                    return
+            
+            atoms = self._get_atoms()
+            if not atoms:
+                return
+            
+            viz = self.controller.viz
+            if viz is None:
+                return
+            
+            # Color scheme: hydrophobic=yellow, positive=blue, negative=red, polar=green, other=gray
+            color_map = {
+                'hydrophobic': (1.0, 1.0, 0.0),  # yellow
+                'positive': (0.0, 0.0, 1.0),      # blue
+                'negative': (1.0, 0.0, 0.0),      # red
+                'polar': (0.0, 1.0, 0.0),         # green
+                'other': (0.5, 0.5, 0.5),         # gray
+            }
+            
+            # Apply colors to residues in patch data
+            for residue_id, patch_type in self._patch_data.items():
+                color = color_map.get(patch_type, (0.5, 0.5, 0.5))
+                # Find atoms with this residue_id and color them
+                for i, atom in enumerate(atoms):
+                    if getattr(atom, 'residue_id', i) == residue_id:
+                        viz.highlight_atom(i, color=color)
+            
+            print(f"Patch coloring applied to {len(self._patch_data)} residues")
+            
+        except Exception as e:
+            print(f"Error visualizing patches: {e}")
+
+    @Slot()
+    def _plot_patch_histogram(self) -> None:
+        """Plot histogram of patch type distribution."""
+        try:
+            if self._patch_data is None:
+                return
+            
+            from collections import Counter
+            counts = Counter(self._patch_data.values())
+            
+            labels = list(counts.keys())
+            values = list(counts.values())
+            
+            # Plot
+            self._patch_hist_plot.plot_bar(
+                labels,
+                values,
+                title="Patch Type Distribution",
+                ylabel="Number of Residues",
+                color="#FF6600"
+            )
+            
+        except Exception as e:
+            print(f"Error plotting patch histogram: {e}")
+
+    def _export_sasa_distribution(self) -> None:
+        """Export SASA distribution data to CSV."""
+        try:
+            if self._sasa_data is None:
+                return
+            
+            path, _ = QFileDialog.getSaveFileName(None, "Export SASA Distribution", "", "CSV Files (*.csv)")
+            if not path:
+                return
+            
+            import numpy as np
+            sasa_vals = list(self._sasa_data.values())
+            bins = np.linspace(min(sasa_vals), max(sasa_vals), 20)
+            hist, _ = np.histogram(sasa_vals, bins=bins)
+            bin_centers = (bins[:-1] + bins[1:]) / 2
+            
+            with open(path, 'w') as f:
+                f.write("SASA_Range_Center,Count\n")
+                for center, count in zip(bin_centers, hist):
+                    f.write(f"{center:.4f},{count}\n")
+            
+            print(f"Exported SASA distribution to {path}")
+            
+        except Exception as e:
+            print(f"Error exporting SASA distribution: {e}")
+
+    def _export_residue_sasa(self) -> None:
+        """Export residue SASA values to CSV."""
+        try:
+            if self._sasa_residues is None:
+                return
+            
+            path, _ = QFileDialog.getSaveFileName(None, "Export Residue SASA", "", "CSV Files (*.csv)")
+            if not path:
+                return
+            
+            residues = sorted(self._sasa_residues.keys())
+            with open(path, 'w') as f:
+                f.write("Residue_ID,SASA_Angstrom2\n")
+                for res_id in residues:
+                    f.write(f"{res_id},{self._sasa_residues[res_id]:.4f}\n")
+            
+            print(f"Exported residue SASA to {path}")
+            
+        except Exception as e:
+            print(f"Error exporting residue SASA: {e}")
+
+    def _export_patch_data(self) -> None:
+        """Export patch classification data to CSV."""
+        try:
+            if self._patch_data is None:
+                return
+            
+            path, _ = QFileDialog.getSaveFileName(None, "Export Patch Data", "", "CSV Files (*.csv)")
+            if not path:
+                return
+            
+            residues = sorted(self._patch_data.keys())
+            with open(path, 'w') as f:
+                f.write("Residue_ID,Patch_Type\n")
+                for res_id in residues:
+                    f.write(f"{res_id},{self._patch_data[res_id]}\n")
+            
+            print(f"Exported patch data to {path}")
+            
+        except Exception as e:
+            print(f"Error exporting patch data: {e}")
 
 # ── Ligand / MCS tab (Phase 5 — Feature 5) ────────────────────────────
 
