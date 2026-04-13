@@ -2397,6 +2397,15 @@ class AnalysisPanel(QWidget):
             hint=True))
 
         layout.addWidget(_lbl("SMILES  (one per line):", dim=True))
+        
+        # ─── FILE UPLOAD ROW ───────────────────────────────────────────────
+        file_row = QHBoxLayout(); file_row.setSpacing(8)
+        load_smiles_btn = _btn("LOAD SMILES FROM TXT")
+        load_smiles_btn.clicked.connect(self._load_smiles_from_file)
+        file_row.addWidget(load_smiles_btn)
+        file_row.addStretch()
+        layout.addLayout(file_row)
+        
         self._mcs_input = QTextEdit()
         self._mcs_input.setFixedHeight(100)
         self._mcs_input.setPlaceholderText(
@@ -2448,6 +2457,15 @@ class AnalysisPanel(QWidget):
             hint=True))
 
         layout.addWidget(_lbl("SMILES  (one per line):", dim=True))
+        
+        # ─── FILE UPLOAD ROW ───────────────────────────────────────────────
+        file_row = QHBoxLayout(); file_row.setSpacing(8)
+        load_smiles_mmp_btn = _btn("LOAD SMILES FROM TXT")
+        load_smiles_mmp_btn.clicked.connect(self._load_smiles_for_mmp)
+        file_row.addWidget(load_smiles_mmp_btn)
+        file_row.addStretch()
+        layout.addLayout(file_row)
+        
         self._mmp_input = QTextEdit()
         self._mmp_input.setFixedHeight(100)
         self._mmp_input.setStyleSheet(
@@ -2655,6 +2673,122 @@ class AnalysisPanel(QWidget):
 
         layout.addStretch()
         w.setWidget(inner); return w
+
+    @Slot()
+    def _load_smiles_from_file_generic(self, text_widget) -> None:
+        """Load SMILES strings from a text file into the specified text widget."""
+        try:
+            from PySide6.QtWidgets import QFileDialog, QMessageBox
+            import os
+            
+            print("[DEBUG] _load_smiles_from_file_generic() called")
+            
+            path, _ = QFileDialog.getOpenFileName(
+                self, 
+                "Load SMILES from Text File", 
+                "", 
+                "Text Files (*.txt);;All Files (*)"
+            )
+            
+            print(f"[DEBUG] File dialog returned: {path}")
+            
+            if not path:
+                print("[DEBUG] No file selected, returning")
+                return
+            
+            # Check if file exists
+            if not os.path.exists(path):
+                msg = f"File does not exist: {path}"
+                print(f"[ERROR] {msg}")
+                QMessageBox.critical(self, "Error", msg)
+                return
+            
+            # Check file size
+            file_size = os.path.getsize(path)
+            print(f"[DEBUG] File size: {file_size} bytes")
+            
+            if file_size == 0:
+                msg = f"File is empty: {path}"
+                print(f"[ERROR] {msg}")
+                QMessageBox.warning(self, "Empty file", msg)
+                return
+            
+            # Try different encodings
+            encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'ascii']
+            lines = []
+            used_encoding = None
+            
+            for encoding in encodings:
+                try:
+                    print(f"[DEBUG] Trying encoding: {encoding}")
+                    with open(path, 'r', encoding=encoding) as f:
+                        lines = f.readlines()
+                    used_encoding = encoding
+                    print(f"[DEBUG] Successfully read with {encoding}")
+                    break
+                except (UnicodeDecodeError, LookupError) as e:
+                    print(f"[DEBUG] Failed with {encoding}: {e}")
+                    continue
+            
+            if not lines:
+                msg = f"Could not read file with any encoding. Tried: {', '.join(encodings)}\n\nFile: {path}"
+                print(f"[ERROR] {msg}")
+                QMessageBox.critical(self, "Error", msg)
+                return
+            
+            print(f"[DEBUG] File has {len(lines)} lines (encoding: {used_encoding})")
+            print(f"[DEBUG] Raw lines: {lines}")
+            
+            # Clean up: remove whitespace, skip empty lines
+            smiles_list = [line.strip() for line in lines if line.strip()]
+            
+            print(f"[DEBUG] After stripping: {smiles_list}")
+            print(f"[DEBUG] Extracted {len(smiles_list)} SMILES")
+            
+            if not smiles_list:
+                raw_content = "".join(lines)[:500]  # First 500 chars
+                msg = f"No valid SMILES found in file: {path}\n\nFile content:\n{raw_content}"
+                print(f"[DEBUG] {msg}")
+                QMessageBox.warning(self, "No data", msg)
+                return
+            
+            # Insert into text edit
+            current_text = text_widget.toPlainText().strip()
+            print(f"[DEBUG] Current text in editor: {len(current_text)} chars")
+            
+            if current_text:
+                # Append with newline separator if there's existing text
+                combined = current_text + "\n" + "\n".join(smiles_list)
+            else:
+                combined = "\n".join(smiles_list)
+            
+            print(f"[DEBUG] Setting text to {len(combined)} chars")
+            text_widget.setPlainText(combined)
+            print(f"[DEBUG] Text set successfully")
+            
+            # Show success message
+            msg = f"✓ Loaded {len(smiles_list)} SMILES from {os.path.basename(path)}:\n" + "\n".join(smiles_list[:10])
+            if len(smiles_list) > 10:
+                msg += f"\n... and {len(smiles_list) - 10} more"
+            print(f"[SUCCESS] {msg}")
+            QMessageBox.information(self, "Success", msg)
+            
+        except Exception as e:
+            import traceback
+            error_msg = f"Error loading SMILES from file:\n{str(e)}\n\n{traceback.format_exc()}"
+            print(f"[ERROR] {error_msg}")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error", error_msg)
+
+    @Slot()
+    def _load_smiles_from_file(self) -> None:
+        """Load SMILES strings from a text file into the MCS input."""
+        self._load_smiles_from_file_generic(self._mcs_input)
+
+    @Slot()
+    def _load_smiles_for_mmp(self) -> None:
+        """Load SMILES strings from a text file into the MMP input."""
+        self._load_smiles_from_file_generic(self._mmp_input)
 
     # ── Phase 5 compute slots ──────────────────────────────────────────────
 

@@ -5,7 +5,8 @@ numpy==1.26.4
 scipy==1.12.0
 MDAnalysis==2.7.0
 biopython==1.83
-# rdkit-pypi==2024.3.1
+rdkit
+scikit-learn
 gemmi==0.6.6
 freesasa==2.2.1
 pyparsing==3.1.2
