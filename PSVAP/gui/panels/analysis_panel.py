@@ -9,6 +9,7 @@ Phase 3 additions: INTERACT tab (Feature 12) and SURFACE tab (Feature 9/18).
 from __future__ import annotations
 
 import numpy as np
+import json
 from pathlib import Path
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtWidgets import (
@@ -16,9 +17,9 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QScrollArea, QSizePolicy, QSpinBox, QTabWidget,
     QTextEdit, QVBoxLayout, QWidget, QCheckBox, QFileDialog,
-    QTableWidget, QTableWidgetItem,
+    QTableWidget, QTableWidgetItem, QHeaderView,
 )
-from PySide6.QtGui import QGuiApplication, QColor
+from PySide6.QtGui import QGuiApplication, QColor, QTextOption
 
 from PSVAP.app.controller import ApplicationController
 from PSVAP.gui.widgets.plot_widget import PlotWidget
@@ -33,6 +34,11 @@ TEXT_HINT = "#555555"
 ACCENT    = "#E8FF00"
 ERROR_COL = "#FF6060"
 MONO      = "Courier New, monospace"
+
+# ── Tab pinning configuration ──────────────────────────────────────────────
+CONFIG_DIR = Path.home() / ".config" / "PSVAP"
+CONFIG_FILE = CONFIG_DIR / "tab_pins.json"
+CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _lbl(text: str, dim: bool = False, hint: bool = False) -> QLabel:
@@ -54,6 +60,7 @@ def _result_box(height: int = 120) -> QTextEdit:
     tb = QTextEdit()
     tb.setReadOnly(True)
     tb.setFixedHeight(height)
+    tb.setWordWrapMode(QTextOption.WordWrap)
     tb.setStyleSheet(
         f"QTextEdit {{ background:{PANEL_ALT}; border:1px solid {BORDER}; "
         f"color:{TEXT}; font-family:{MONO}; font-size:10px; padding:6px; }}"
@@ -103,10 +110,99 @@ def _safe_int(text: str) -> int | None:
         return None
 
 
+class TabManager:
+    """Manages tab pinning state and order."""
+    
+    TAB_INFO = [
+        ("GEOMETRY", "_build_geometry_tab"),
+        ("RMSD", "_build_rmsd_tab"),
+        ("ALIGN", "_build_alignment_tab"),
+        ("SEQUENCE", "_build_sequence_tab"),
+        ("INTERACT", "_build_interact_tab"),
+        ("SURFACE", "_build_surface_tab"),
+        ("LIGAND", "_build_ligand_tab"),
+        ("MMP", "_build_mmp_tab"),
+        ("PHARMA", "_build_pharma_tab"),
+        ("QSAR", "_build_qsar_tab"),
+        ("PKA", "_build_pka_tab"),
+        ("CONFORM", "_build_conform_tab"),
+        ("SITES", "_build_sites_tab"),
+        ("WATER MAP", "_build_watermap_tab"),
+        ("CLUSTER", "_build_cluster_tab"),
+    ]
+    TAB_LABELS = [label for label, _ in TAB_INFO]
+    
+    def __init__(self):
+        self.pinned_tabs = self._load_pins()
+
+    def _normalize_pins(self, pinned_tabs: list[str]) -> list[str]:
+        """Keep only valid tabs, preserve order, and remove duplicates."""
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for tab_label in pinned_tabs:
+            if tab_label in self.TAB_LABELS and tab_label not in seen:
+                normalized.append(tab_label)
+                seen.add(tab_label)
+        return normalized
+    
+    def _load_pins(self) -> list[str]:
+        """Load pinned tabs from config file."""
+        try:
+            if CONFIG_FILE.exists():
+                with open(CONFIG_FILE, 'r') as f:
+                    data = json.load(f)
+                    return self._normalize_pins(data.get('pinned_tabs', []))
+        except Exception as e:
+            print(f"[TabManager] Error loading pins: {e}")
+        return []
+    
+    def _save_pins(self) -> None:
+        """Save pinned tabs to config file."""
+        try:
+            data = {'pinned_tabs': self.pinned_tabs}
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"[TabManager] Error saving pins: {e}")
+    
+    def toggle_pin(self, tab_label: str) -> None:
+        """Toggle pin state for a tab."""
+        if tab_label not in self.TAB_LABELS:
+            return
+        if tab_label in self.pinned_tabs:
+            self.pinned_tabs.remove(tab_label)
+        else:
+            self.pinned_tabs.append(tab_label)
+        self._save_pins()
+    
+    def is_pinned(self, tab_label: str) -> bool:
+        """Check if tab is pinned."""
+        return tab_label in self.pinned_tabs
+
+    def get_pinned_tabs(self) -> list[str]:
+        """Return pinned tabs in the same order as TAB_INFO."""
+        return [label for label in self.TAB_LABELS if label in self.pinned_tabs]
+
+    def get_unpinned_tabs(self) -> list[str]:
+        """Return tabs that are currently not pinned."""
+        return [label for label in self.TAB_LABELS if label not in self.pinned_tabs]
+    
+    def get_ordered_tabs(self) -> list[tuple[str, str]]:
+        """Get tabs ordered: pinned first, then unpinned."""
+        pinned = [t for t in self.TAB_INFO if t[0] in self.pinned_tabs]
+        unpinned = [t for t in self.TAB_INFO if t[0] not in self.pinned_tabs]
+        return pinned + unpinned
+    
+    def get_pin_indicator(self, tab_label: str) -> str:
+        """Get indicator symbol for tab."""
+        return "📌" if self.is_pinned(tab_label) else " "
+
+
 class AnalysisPanel(QWidget):
     def __init__(self, *, controller: ApplicationController) -> None:
         super().__init__()
         self.controller = controller
+        self.tab_manager = TabManager()
         
         # Initialize interaction data storage
         self._last_interaction_result = None
@@ -226,35 +322,189 @@ class AnalysisPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        self._current_tab = None
 
-        tabs = QTabWidget()
-        tabs.setDocumentMode(True)
-        tabs.setStyleSheet(
-            f"QTabWidget::pane {{ border:none; border-top:1px solid {BORDER}; background:{BG}; }}"
-            f"QTabBar {{ background:{BG}; }}"
-            f"QTabBar::tab {{ background:{BG}; color:{TEXT_HINT}; font-size:8px; "
-            f"letter-spacing:2px; padding:8px 12px; border:none; "
-            f"border-bottom:2px solid transparent; }}"
-            f"QTabBar::tab:selected {{ color:{TEXT}; border-bottom:2px solid {ACCENT}; "
-            f"background:{PANEL_ALT}; }}"
-            f"QTabBar::tab:hover:!selected {{ color:{TEXT_DIM}; background:{PANEL_ALT}; }}"
+        # ═══ HEADER: TAB SELECTOR & PIN BUTTON ═════════════════════════════
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(12, 8, 12, 8)
+        header_layout.setSpacing(8)
+        
+        header_layout.addWidget(_lbl("Tab:", dim=False))
+        
+        self._tab_selector = QComboBox()
+        self._tab_selector.setStyleSheet(
+            f"QComboBox {{ background:{PANEL_ALT}; border:1px solid {BORDER}; "
+            f"color:{TEXT}; padding:4px 8px; font-size:9px; }}"
+            f"QComboBox::drop-down {{ border:none; }}"
+            f"QComboBox QAbstractItemView {{ background:{PANEL_ALT}; border:1px solid {BORDER}; }}"
         )
-        tabs.addTab(self._build_geometry_tab(),    "GEOMETRY")
-        tabs.addTab(self._build_rmsd_tab(),        "RMSD")
-        tabs.addTab(self._build_alignment_tab(),   "ALIGN")
-        tabs.addTab(self._build_sequence_tab(),    "SEQUENCE")
-        tabs.addTab(self._build_interact_tab(),    "INTERACT")   # Phase 3
-        tabs.addTab(self._build_surface_tab(),     "SURFACE")    # Phase 3
-        tabs.addTab(self._build_ligand_tab(),    "LIGAND")
-        tabs.addTab(self._build_mmp_tab(),       "MMP")
-        tabs.addTab(self._build_pharma_tab(),    "PHARMA")
-        tabs.addTab(self._build_qsar_tab(),      "QSAR")
-        tabs.addTab(self._build_pka_tab(),       "PKA")
-        tabs.addTab(self._build_conform_tab(),   "CONFORM")
-        tabs.addTab(self._build_sites_tab(),    "SITES")
-        tabs.addTab(self._build_watermap_tab(), "WATER MAP")
-        tabs.addTab(self._build_cluster_tab(),  "CLUSTER")
-        layout.addWidget(tabs)
+        self._populate_tab_selector()
+        self._tab_selector.currentIndexChanged.connect(self._on_tab_selector_changed)
+        header_layout.addWidget(self._tab_selector, stretch=1)
+        
+        self._pin_btn = _btn("PIN")
+        self._pin_btn.setFixedWidth(64)
+        self._pin_btn.clicked.connect(self._pin_current_tab)
+        header_layout.addWidget(self._pin_btn)
+        
+        header_layout.addStretch()
+        layout.addLayout(header_layout)
+        layout.addWidget(_divider())
+        
+        # ═══ PINNED TABS TRAY ══════════════════════════════════════════════
+        # ═══ PINNED TABS LIST ═══════════════════════════════════════════════
+        self._pinned_scroll = QScrollArea()
+        self._pinned_scroll.setWidgetResizable(True)
+        self._pinned_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._pinned_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._pinned_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._pinned_scroll.setFixedHeight(54)
+        self._pinned_scroll.setStyleSheet(
+            f"QScrollArea {{ background:transparent; border:none; }}"
+        )
+
+        self._pinned_container = QWidget()
+        self._pinned_container.setStyleSheet("background:transparent;")
+        self._pinned_container_layout = QHBoxLayout(self._pinned_container)
+        self._pinned_container_layout.setContentsMargins(8, 6, 8, 6)
+        self._pinned_container_layout.setSpacing(6)
+        self._pinned_container_layout.addStretch()
+
+        self._pinned_scroll.setWidget(self._pinned_container)
+        layout.addWidget(self._pinned_scroll)
+        layout.addWidget(_divider())
+        
+        # ═══ CONTENT AREA ══════════════════════════════════════════════════
+        self._content_layout = QVBoxLayout()
+        self._content_layout.setContentsMargins(0, 0, 0, 0)
+        self._content_layout.setSpacing(0)
+        
+        # Create and store all tab widgets
+        self._tab_widgets = {}
+        self._tab_labels = []
+        for tab_label, builder_name in self.tab_manager.TAB_INFO:
+            builder = getattr(self, builder_name, None)
+            if builder:
+                self._tab_widgets[tab_label] = builder()
+                self._tab_labels.append(tab_label)
+        
+        if self._tab_labels:
+            self._show_tab(self._tab_labels[0])
+        self._update_ui()
+        
+        layout.addLayout(self._content_layout)
+
+    def _populate_tab_selector(self) -> None:
+        """Fill the dropdown with all tabs and pin markers."""
+        self._tab_selector.blockSignals(True)
+        self._tab_selector.clear()
+        for tab_label in self.tab_manager.TAB_LABELS:
+            display = ("● " if self.tab_manager.is_pinned(tab_label) else "") + tab_label
+            self._tab_selector.addItem(display, tab_label)
+
+        if self._current_tab:
+            for i in range(self._tab_selector.count()):
+                if self._tab_selector.itemData(i) == self._current_tab:
+                    self._tab_selector.setCurrentIndex(i)
+                    break
+        elif self._tab_selector.count():
+            self._tab_selector.setCurrentIndex(0)
+
+        self._tab_selector.blockSignals(False)
+
+    def _refresh_pinned_list(self) -> None:
+        """Rebuild the horizontal pinned-tabs strip from the current pin array."""
+        while self._pinned_container_layout.count():
+            item = self._pinned_container_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        pinned_tabs = self.tab_manager.get_pinned_tabs()
+        if not pinned_tabs:
+            self._pinned_scroll.setVisible(False)
+            return
+
+        for tab_label in pinned_tabs:
+            btn = QPushButton(tab_label)
+            btn.setFixedHeight(28)
+            if tab_label == self._current_tab:
+                style = (
+                    f"QPushButton {{ background-color:{PANEL_ALT}; color:{TEXT}; "
+                    f"font-size:9px; letter-spacing:2px; padding:10px 16px; "
+                    f"border:none; border-bottom:2px solid {ACCENT}; min-width:70px; }}"
+                    f"QPushButton:hover {{ color:{TEXT}; background-color:{PANEL_ALT}; }}"
+                )
+            else:
+                style = (
+                    f"QPushButton {{ background-color:{BG}; color:{TEXT_DIM}; "
+                    f"font-size:9px; letter-spacing:2px; padding:10px 16px; "
+                    f"border:none; border-bottom:2px solid transparent; min-width:70px; }}"
+                    f"QPushButton:hover {{ color:{TEXT}; background-color:{PANEL_ALT}; }}"
+                )
+            btn.setStyleSheet(style)
+            btn.clicked.connect(lambda checked=False, lbl=tab_label: self._show_tab(lbl))
+            self._pinned_container_layout.insertWidget(self._pinned_container_layout.count() - 1, btn)
+
+    def _sync_pin_button(self) -> None:
+        """Update the pin button label to match the current tab state."""
+        if self._current_tab and self.tab_manager.is_pinned(self._current_tab):
+            self._pin_btn.setText("UNPIN")
+        else:
+            self._pin_btn.setText("PIN")
+    
+    def _on_tab_selector_changed(self, index: int) -> None:
+        """Handle tab selector change."""
+        if index < 0:
+            return
+        tab_label = self._tab_selector.itemData(index)
+        if tab_label:
+            self._show_tab(tab_label)
+    
+    def _show_tab(self, tab_label: str) -> None:
+        """Show the specified tab content."""
+        # Hide previous tab
+        if self._current_tab and self._current_tab in self._tab_widgets:
+            self._tab_widgets[self._current_tab].hide()
+        
+        # Show new tab
+        if tab_label in self._tab_widgets:
+            widget = self._tab_widgets[tab_label]
+            if widget.parent() is None:
+                # First time showing this widget
+                self._content_layout.addWidget(widget)
+            else:
+                widget.show()
+            self._current_tab = tab_label
+            if hasattr(self, "_tab_selector"):
+                self._tab_selector.blockSignals(True)
+                for i in range(self._tab_selector.count()):
+                    if self._tab_selector.itemData(i) == tab_label:
+                        self._tab_selector.setCurrentIndex(i)
+                        break
+                self._tab_selector.blockSignals(False)
+            self._refresh_pinned_list()
+            self._sync_pin_button()
+    
+    def _pin_current_tab(self) -> None:
+        """Pin the currently selected tab."""
+        if self._current_tab and self._current_tab in self._tab_labels:
+            self.tab_manager.toggle_pin(self._current_tab)
+            self._update_ui()
+    
+    def _update_ui(self) -> None:
+        """Update the tab dropdown, pinned list, and pin button."""
+        self._populate_tab_selector()
+        self._refresh_pinned_list()
+        self._sync_pin_button()
+    
+    def _refresh_ui(self) -> None:
+        """Clear and rebuild the panel."""
+        layout = self.layout()
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._build()
 
     # ── Geometry tab ───────────────────────────────────────────────────────
 
@@ -618,11 +868,16 @@ class AnalysisPanel(QWidget):
         self._inter_table = QTableWidget()
         self._inter_table.setColumnCount(6)
         self._inter_table.setHorizontalHeaderLabels(["Type", "Atom 1", "Atom 2", "Distance (Å)", "Angle (°)", "Extra"])
-        self._inter_table.setStyleSheet(f"QTableWidget {{ background:{PANEL_ALT}; color:{TEXT}; }}")
+        self._inter_table.setStyleSheet(
+            f"QTableWidget {{ background:{PANEL_ALT}; color:{TEXT}; }}"
+            f"QTableWidget::item {{ padding: 4px; }}"
+            f"QHeaderView::section {{ background: {BORDER}; color: {TEXT}; padding: 4px; border: none; }}"
+        )
         self._inter_table.setSortingEnabled(True)
-        # Allow table to expand in BOTH directions - KEY FIX
         self._inter_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        inner_layout.addWidget(self._inter_table, 3)  # High stretch factor
+        self._inter_table.setMinimumHeight(200)
+        self._inter_table.verticalHeader().setDefaultSectionSize(28)
+        inner_layout.addWidget(self._inter_table, 2)
         
         export_row = QHBoxLayout(); export_row.setSpacing(8)
         self._inter_export_btn = _btn("EXPORT TABLE CSV")
@@ -639,14 +894,14 @@ class AnalysisPanel(QWidget):
         inner_layout.addWidget(self._inter_traj_btn)
         
         self._inter_traj_plot = PlotWidget()
-        self._inter_traj_plot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        inner_layout.addWidget(self._inter_traj_plot, 2)  # High stretch factor
+        self._inter_traj_plot.setFixedHeight(300)
+        inner_layout.addWidget(self._inter_traj_plot)
         
         self._inter_traj_export_btn = _btn("EXPORT PLOT DATA CSV")
         self._inter_traj_export_btn.clicked.connect(self._export_traj_interactions_csv)
         inner_layout.addWidget(self._inter_traj_export_btn)
         
-        self._inter_traj_result = _result_box(80)
+        self._inter_traj_result = _result_box(120)
         inner_layout.addWidget(self._inter_traj_result)
         
         self._inter_traj_btn.clicked.connect(self._run_interactions_trajectory)
@@ -670,12 +925,15 @@ class AnalysisPanel(QWidget):
         layout = QVBoxLayout(card); layout.setContentsMargins(8,8,8,8); layout.setSpacing(6)
         lbl_title = QLabel(title)
         lbl_title.setStyleSheet(f"color: {TEXT}; font-size: 10px; font-weight: bold;")
+        lbl_title.setWordWrap(True)
+        lbl_title.setAlignment(Qt.AlignCenter)
         lbl_count = QLabel(count)
         lbl_count.setStyleSheet(f"color: {color}; font-size: 18px; font-weight: bold;")
+        lbl_count.setAlignment(Qt.AlignCenter)
         layout.addWidget(lbl_title)
         layout.addWidget(lbl_count)
-        card.setMaximumHeight(90)
-        card.setMinimumHeight(85)
+        card.setMinimumHeight(100)
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         card._count_label = lbl_count
         return card
 
@@ -1558,7 +1816,14 @@ class AnalysisPanel(QWidget):
                     item.setForeground(QColor(TEXT))
                     self._inter_table.setItem(i, j, item)
             
+            # Configure column widths
             self._inter_table.resizeColumnsToContents()
+            # Set columns to resize automatically based on content
+            header = self._inter_table.horizontalHeader()
+            header.setStretchLastSection(False)
+            for col in range(6):
+                header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+            
             print(f"Populated interaction table with {len(rows)} rows")
 
         except Exception as e:
@@ -1676,6 +1941,7 @@ class AnalysisPanel(QWidget):
         try:
             frames = data.get('frames', [])
             hbond_counts = data.get('hbond_counts', [])
+            salt_counts = data.get('salt_counts', [])
             clash_counts = data.get('clash_counts', [])
             
             if not frames:
@@ -1683,17 +1949,39 @@ class AnalysisPanel(QWidget):
             
             x = np.array(frames)
             
-            # Plot H-bonds as main line
-            if self._cb_hbond.isChecked() and hbond_counts:
-                self._inter_traj_plot.plot_line(
-                    x, np.array(hbond_counts), 
-                    title="Interactions Over Trajectory",
-                    xlabel="Frame", ylabel="Count",
-                    color="#00AAFF"
-                )
+            # Clear previous plot
+            if self._inter_traj_plot._ax:
+                self._inter_traj_plot._ax.clear()
+                
+                # Plot all enabled interaction types
+                plotted = False
+                if self._cb_hbond.isChecked() and hbond_counts:
+                    self._inter_traj_plot._ax.plot(x, np.array(hbond_counts), 
+                                                   color="#00AAFF", linewidth=2, label="H-Bonds", marker='o', markersize=4)
+                    plotted = True
+                
+                if self._cb_salt.isChecked() and salt_counts:
+                    self._inter_traj_plot._ax.plot(x, np.array(salt_counts),
+                                                   color="#FFFF00", linewidth=2, label="Salt Bridges", marker='s', markersize=4)
+                    plotted = True
+                
+                if self._cb_clash.isChecked() and clash_counts:
+                    self._inter_traj_plot._ax.plot(x, np.array(clash_counts),
+                                                   color="#FF4444", linewidth=2, label="Clashes", marker='^', markersize=4)
+                    plotted = True
+                
+                if plotted:
+                    self._inter_traj_plot._ax.set_title("Interactions Over Trajectory", fontsize=10)
+                    self._inter_traj_plot._ax.set_xlabel("Frame", fontsize=9)
+                    self._inter_traj_plot._ax.set_ylabel("Count", fontsize=9)
+                    self._inter_traj_plot._ax.legend(loc='upper right', fontsize=8)
+                    self._inter_traj_plot._ax.grid(True, alpha=0.3)
+                    self._inter_traj_plot._canvas.draw()
                     
         except Exception as e:
             print(f"Plot error: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _export_traj_interactions_csv(self) -> None:
         """Export trajectory interaction data to CSV."""
