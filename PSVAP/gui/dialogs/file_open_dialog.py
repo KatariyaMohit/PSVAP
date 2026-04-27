@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QFileDialog
 _FILTERS = ";;".join([
     "All Supported ("
     "*.lammpstrj *.traj *.data *.lammps "
-    "*.gro *.xtc *.trr "
+    "*.gro *.xtc *.trr *.bin *.top *.itp *.tpr *.cpt "
     "*.pdb *.cif *.mmcif "
     "*.nc *.ncdf *.mdcrd *.crd *.rst7 *.rst "
     "*.dcd *.xyz *.mol2 *.sdf *.mol"
@@ -24,11 +24,14 @@ _FILTERS = ";;".join([
     "LAMMPS Data File (*.data *.lammps)",
     "GROMACS Structure (*.gro)",
     "GROMACS Trajectory (*.xtc *.trr)",
+    "GROMACS Topology (*.top *.itp)",
+    "GROMACS Runtime/Checkpoint (*.tpr *.cpt)",
     "Protein Data Bank (*.pdb)",
     "mmCIF / PDBx (*.cif *.mmcif)",
     "AMBER Trajectory (*.nc *.ncdf *.mdcrd *.crd)",
     "AMBER Restart (*.rst7 *.rst)",
     "CHARMM/NAMD DCD (*.dcd)",
+    "Raw Binary Trajectory (*.bin)",
     "XYZ Format (*.xyz)",
     "MOL2 Format (*.mol2)",
     "SDF / MOL (*.sdf *.mol)",
@@ -36,22 +39,22 @@ _FILTERS = ";;".join([
 ])
 
 _TOPO_FILTERS = ";;".join([
-    "All Topology Files (*.data *.lammps *.lammpstrj *.gro *.pdb *.prmtop *.parm7 *.psf)",
+    "All Topology Files (*.data *.lammps *.lammpstrj *.gro *.pdb *.top *.itp *.tpr *.prmtop *.parm7 *.psf)",
     "LAMMPS Data (*.data *.lammps *.lammpstrj)",
     "GROMACS Structure (*.gro)",
+    "GROMACS Topology (*.top *.itp *.tpr)",
     "PDB Topology (*.pdb)",
     "AMBER Topology (*.prmtop *.parm7)",
     "CHARMM PSF (*.psf)",
-    "All Files (*)",
 ])
 
 _TRAJ_FILTERS = ";;".join([
-    "All Trajectory Files (*.lammpstrj *.traj *.xtc *.trr *.nc *.ncdf *.mdcrd *.dcd)",
+    "All Trajectory Files (*.lammpstrj *.traj *.xtc *.trr *.bin *.cpt *.nc *.ncdf *.mdcrd *.dcd)",
     "LAMMPS Trajectory (*.lammpstrj *.traj)",
-    "GROMACS Trajectory (*.xtc *.trr)",
+    "GROMACS Trajectory (*.xtc *.trr *.cpt)",
     "AMBER Trajectory (*.nc *.ncdf *.mdcrd *.crd)",
     "CHARMM/NAMD DCD (*.dcd)",
-    "All Files (*)",
+    "Raw Binary Trajectory (*.bin)",
 ])
 
 

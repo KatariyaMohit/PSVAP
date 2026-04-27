@@ -65,29 +65,39 @@ def _btn(text: str, accent: bool = False) -> QPushButton:
 class PluginRunnerThread(QThread):
     """
     Runs a user plugin script in a background thread.
-    Emits output lines as they are produced.
+    Emits output lines and visualization requests safely.
     """
     output_line = Signal(str)
     finished_ok = Signal()
     finished_err = Signal(str)
+    highlight_requested = Signal(object, str)  # THE SAFETY SIGNAL
 
-    def __init__(self, script: str, api) -> None:
+    def __init__(self, script: str, model) -> None:
         super().__init__()
         self._script = script
-        self._api    = api
+        self._model = model
 
     def run(self) -> None:
         try:
+            from PSVAP.plugins.api import PluginAPI
             from PSVAP.plugins.sandbox import run_plugin_script
-            stdout_lines: list[str] = []
+            
+            # Create the API inside the thread, hooking it to our Signals!
+            api = PluginAPI(
+                model=self._model,
+                stdout_callback=self.output_line.emit,
+                highlight_callback=self.highlight_requested.emit
+            )
+            
             run_plugin_script(
                 self._script,
-                self._api,
+                api,
                 stdout_callback=self.output_line.emit,
             )
             self.finished_ok.emit()
         except Exception as exc:
             self.finished_err.emit(str(exc))
+
 
 
 class PluginPanel(QWidget):
@@ -211,6 +221,8 @@ class PluginPanel(QWidget):
 
     @Slot()
     def _run_script(self) -> None:
+        if self.controller._engine is not None:
+            self.controller._engine.clear_plugin_highlights()
         script = self._editor.toPlainText().strip()
         if not script:
             return
@@ -220,22 +232,22 @@ class PluginPanel(QWidget):
         self._status_lbl.setText("RUNNING...")
         self._run_btn.setEnabled(False)
 
-        # Build plugin API
-        try:
-            from PSVAP.plugins.api import PluginAPI
-            api = PluginAPI(model=self.controller.model,
-                            engine=self.controller._engine)
-        except Exception as exc:
-            self._console.append(f"API ERROR: {exc}")
-            self._run_btn.setEnabled(True)
-            return
-
-        # Run in thread
-        self._runner = PluginRunnerThread(script, api)
+        # Run in thread, passing ONLY the model
+        self._runner = PluginRunnerThread(script, self.controller.model)
         self._runner.output_line.connect(self._on_output)
         self._runner.finished_ok.connect(self._on_finished_ok)
         self._runner.finished_err.connect(self._on_finished_err)
+        
+        # Connect the safety signal to the main graphics thread!
+        self._runner.highlight_requested.connect(self._on_highlight_requested)
+        
         self._runner.start()
+
+    @Slot(object, str)
+    def _on_highlight_requested(self, mask, color: str) -> None:
+        # This safely executes on the main window thread! No more crashes.
+        if self.controller._engine is not None:
+            self.controller._engine.apply_plugin_colors(mask, color)
 
     @Slot(str)
     def _on_output(self, line: str) -> None:

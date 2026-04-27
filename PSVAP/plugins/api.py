@@ -51,14 +51,14 @@ class PluginAPI:
     def __init__(
         self,
         model: SystemModel,
-        engine=None,
         stdout_callback: Callable[[str], None] | None = None,
+        highlight_callback: Callable[[np.ndarray, str], None] | None = None,
         output_dir: str | Path = "plugin_output",
     ) -> None:
-        self._model    = model
-        self._engine   = engine
+        self._model = model
         self._callback = stdout_callback or print
-        self._out_dir  = Path(output_dir)
+        self._highlight_callback = highlight_callback
+        self._out_dir = Path(output_dir)
 
     # ── Atom / position access ────────────────────────────────────────────
 
@@ -143,23 +143,48 @@ class PluginAPI:
         color: str = "yellow",
     ) -> None:
         """
-        Highlight atoms matching mask in the viewport.
+        Highlight atoms matching mask in the viewport with a specified color.
 
         Parameters
         ----------
         mask  : boolean np.ndarray of shape (N,)
-        color : color name (ignored in current render — uses selection
-                highlight color from viz_engine)
+        color : color name ('red', 'blue', 'green', 'yellow', 'cyan', 'magenta', 
+                'orange', 'purple', 'pink', 'white')
         """
         try:
-            if self._engine is not None:
-                self._engine.apply_selection(
-                    np.asarray(mask, dtype=bool)
-                )
-            self._model.apply_selection(np.asarray(mask, dtype=bool))
+            # Validate and convert mask
+            if not isinstance(mask, np.ndarray):
+                self.log(f"ERROR: highlight() mask must be numpy array, got {type(mask)}")
+                return
+            
+            if mask.dtype != bool:
+                try:
+                    mask = mask.astype(bool)
+                except Exception as e:
+                    self.log(f"ERROR: Could not convert mask to bool: {e}")
+                    return
+            
+            if len(mask) != len(self._model.atoms):
+                self.log(f"ERROR: mask length {len(mask)} != n_atoms {len(self._model.atoms)}")
+                return
+            
+            # Validate color
+            valid_colors = {
+                'red', 'blue', 'green', 'yellow', 'cyan', 'magenta',
+                'orange', 'purple', 'pink', 'white'
+            }
+            if color.lower() not in valid_colors:
+                self.log(f"Warning: unknown color '{color}', using 'yellow'")
+                color = 'yellow'
+            
+            # Apply plugin colors via the visualization engine
+            # Apply plugin colors safely via callback (which emits a Signal)
+            if self._highlight_callback is not None:
+                self._highlight_callback(mask, color.lower())
+            
+            self.log(f"✓ Highlighted {np.sum(mask)} atoms in {color}.")
         except Exception as exc:
             self.log(f"Highlight error: {exc}")
-
     # ── Output ─────────────────────────────────────────────────────────────
 
     def log(self, message: str) -> None:

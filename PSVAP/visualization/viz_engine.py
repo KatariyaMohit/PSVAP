@@ -109,6 +109,20 @@ _MEASUREMENT_COLORS = {
     'torsion': np.array([1.00, 0.00, 1.00], dtype=np.float32),     # magenta/pink
 }
 
+# Plugin highlight colors (for plugin-requested highlights)
+_PLUGIN_COLORS = {
+    'red': np.array([1.00, 0.20, 0.20], dtype=np.float32),
+    'blue': np.array([0.20, 0.50, 1.00], dtype=np.float32),
+    'green': np.array([0.20, 0.90, 0.20], dtype=np.float32),
+    'yellow': np.array([1.00, 0.90, 0.20], dtype=np.float32),
+    'cyan': np.array([0.20, 1.00, 1.00], dtype=np.float32),
+    'magenta': np.array([1.00, 0.20, 1.00], dtype=np.float32),
+    'orange': np.array([1.00, 0.65, 0.20], dtype=np.float32),
+    'purple': np.array([0.70, 0.20, 0.90], dtype=np.float32),
+    'pink': np.array([1.00, 0.60, 0.80], dtype=np.float32),
+    'white': np.array([1.00, 1.00, 1.00], dtype=np.float32),
+}
+
 
 def _atom_color(atom) -> tuple:
     """Return RGB colour for an atom — element-based if available, type-based otherwise."""
@@ -195,6 +209,10 @@ class VisualizationEngine(QObject):
         self._measurement_atoms: set[int] = set()   # atom indices in current measurement
         self._measurement_type: str | None = None    # 'distance', 'angle', 'torsion'
         
+       # Plugin highlighting (Multi-color accumulation)
+        self._plugin_active_mask: np.ndarray | None = None  # bool (N,)
+        self._plugin_colors_array: np.ndarray | None = None # float32 (N, 3)
+        
         # Sequence-based coloring
         self._sequence_color_mode: str | None = None   # 'residue_index', 'residue_type', or None
         
@@ -267,6 +285,53 @@ class VisualizationEngine(QObject):
         if self._current_positions is not None:
             self._rebuild_scene()
 
+    def apply_plugin_colors(self, mask: np.ndarray | None, color: str = 'yellow') -> None:
+        """
+        Apply plugin-requested highlight colors using an accumulation buffer.
+        This allows multiple calls (e.g., Red for helices, Blue for sheets).
+        """
+        if self._current_positions is None: return
+        n = len(self._current_positions)
+        
+        # Initialize the accumulation buffer if it doesn't exist
+        if self._plugin_active_mask is None or len(self._plugin_active_mask) != n:
+            self._plugin_active_mask = np.zeros(n, dtype=bool)
+            self._plugin_colors_array = np.zeros((n, 3), dtype=np.float32)
+
+        if mask is not None:
+            mask = np.asarray(mask, dtype=bool)
+            rgb = _PLUGIN_COLORS.get(color.lower(), _PLUGIN_COLORS['yellow'])
+            
+            # THE FIX: Add these atoms to the active set and store their specific color
+            self._plugin_active_mask |= mask
+            self._plugin_colors_array[mask] = rgb
+
+        # FAST PATH: Update the graphics memory
+        if self._plotter is not None:
+            new_colors = self._effective_colors()
+            if self._cloud is not None:
+                self._cloud.point_data["colors"] = new_colors
+            if self._bond_mesh is not None:
+                self._bond_mesh.point_data["colors"] = new_colors
+            self._plotter.render()
+
+    def highlight_atom(self, index: int, color: str = 'yellow') -> None:
+        """
+        Highlight a single atom by its index.
+        Used by the Particle Surface and Volume Analysis (PSVAP) patch visualization.
+        """
+        if self._current_positions is None:
+            return
+            
+        n = len(self._current_positions)
+        if 0 <= index < n:
+            # Create a mask where only this specific atom is True
+            mask = np.zeros(n, dtype=bool)
+            mask[index] = True
+            
+            # Use our existing thread-safe, multi-color highlight system
+            self.apply_plugin_colors(mask, color)
+
     def get_legend_items(self) -> list[tuple[str, tuple]]:
         """
         Return [(label, (r,g,b))] for the colour legend.
@@ -294,6 +359,9 @@ class VisualizationEngine(QObject):
 
         self._atoms_list = list(atoms)
         self._n_atoms = len(atoms)
+
+        self._plugin_active_mask = None
+        self._plugin_colors_array = None
 
         frame0 = self._model.get_frame(0)
         if frame0 is None:
@@ -410,14 +478,16 @@ class VisualizationEngine(QObject):
                 if bond_lines is not None and len(bond_lines) > 0:
                     self._bond_mesh = pv.PolyData(pos)
                     self._bond_mesh.lines = bond_lines
+                    self._bond_mesh.point_data["colors"] = colors  # Assign colors to bonds!
                     self._bond_actor = self._plotter.add_mesh(
                         self._bond_mesh,
-                        color="gray",
+                        scalars="colors",  # Read the colors
+                        rgb=True,          # Apply as RGB
                         line_width=1.5,
                         show_scalar_bar=False,
                         name="bonds",
                     )
-    
+                    
             # ── Simulation box ───────────────────────────────────────────
             self._render_box(pv)
     
@@ -432,7 +502,7 @@ class VisualizationEngine(QObject):
 
     
     def _effective_colors(self) -> np.ndarray:
-        """Compute per-atom colours accounting for selection, sequence coloring, and measurement highlights."""
+        """Compute per-atom colours accounting for selection, sequence coloring, measurement, and plugin highlights."""
         if self._base_colors is None:
             return np.full((self._n_atoms, 3), 0.6, dtype=np.float32)
 
@@ -454,7 +524,14 @@ class VisualizationEngine(QObject):
             # Highlight selected
             colors[sel] = _SEL_COLOR
         
-        # Apply measurement highlighting (takes precedence over selection)
+        # Apply plugin highlight colors (takes precedence over selection)
+        if self._plugin_active_mask is not None and np.any(self._plugin_active_mask):
+            # Dim all atoms that are NOT part of any plugin highlight
+            colors[~self._plugin_active_mask] *= 0.35
+            # Apply the specific accumulated colors (Reds, Blues, etc.) from our buffer
+            colors[self._plugin_active_mask] = self._plugin_colors_array[self._plugin_active_mask]
+        
+        # Apply measurement highlighting (takes precedence over all)
         if self._measurement_atoms and self._measurement_type in _MEASUREMENT_COLORS:
             meas_color = _MEASUREMENT_COLORS[self._measurement_type]
             for idx in self._measurement_atoms:
@@ -852,6 +929,13 @@ class VisualizationEngine(QObject):
         except Exception:
             pass
 
+
+    def clear_plugin_highlights(self) -> None:
+        """Reset all plugin-applied colors to default."""
+        self._plugin_active_mask = None
+        self._plugin_colors_array = None
+        if self._plotter and self._current_positions is not None:
+            self._rebuild_scene()
     # ── Controller access (used by controller._engine) ─────────────────────
 
     @property

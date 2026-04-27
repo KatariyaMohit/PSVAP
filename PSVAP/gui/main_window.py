@@ -31,6 +31,8 @@ Fix: QActionGroup with setExclusive(True) enforces radio-button behaviour.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QFont, QColor, QPalette, QCursor, QActionGroup
 from PySide6.QtWidgets import (
@@ -78,7 +80,7 @@ ERROR     = "#FF3B30"
 _ALL_FILTER = (
     "All Supported ("
     "*.lammpstrj *.traj *.data *.lammps "
-    "*.gro *.xtc *.trr "
+    "*.gro *.xtc *.trr *.bin "
     "*.pdb *.cif *.mmcif "
     "*.nc *.ncdf *.mdcrd *.crd *.rst7 *.rst "
     "*.dcd *.xyz *.mol2 *.sdf *.mol"
@@ -95,6 +97,7 @@ _SINGLE_FILTERS = ";;".join([
     "AMBER Trajectory (*.nc *.ncdf *.mdcrd *.crd)",
     "AMBER Restart (*.rst7 *.rst)",
     "CHARMM/NAMD DCD (*.dcd)",
+    "Raw Binary Trajectory (*.bin)",
     "XYZ Format (*.xyz)",
     "MOL2 Format (*.mol2)",
     "SDF / MOL (*.sdf *.mol)",
@@ -110,11 +113,18 @@ _TOPO_FILTERS = ";;".join([
     "All Files (*)",
 ])
 _TRAJ_FILTERS = ";;".join([
-    "All Trajectory Files (*.lammpstrj *.traj *.xtc *.trr *.nc *.ncdf *.mdcrd *.dcd)",
+    "All Trajectory Files (*.lammpstrj *.traj *.xtc *.trr *.bin *.nc *.ncdf *.mdcrd *.dcd)",
     "LAMMPS Trajectory (*.lammpstrj *.traj)",
     "GROMACS Trajectory (*.xtc *.trr)",
     "AMBER Trajectory (*.nc *.ncdf *.mdcrd *.crd)",
     "CHARMM/NAMD DCD (*.dcd)",
+    "Raw Binary Trajectory (*.bin)",
+    "All Files (*)",
+])
+_RAW_BINARY_TOPO_FILTERS = ";;".join([
+    "Topology for Raw Binary (*.pdb *.gro)",
+    "Protein Data Bank (*.pdb)",
+    "GROMACS Structure (*.gro)",
     "All Files (*)",
 ])
 
@@ -688,7 +698,7 @@ class PSVAPMainWindow(QMainWindow):
     def _on_open_single(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "OPEN FILE", "", _SINGLE_FILTERS)
         if path:
-            self.controller.load_file(path)
+            self._open_path(path)
 
     @Slot()
     def _on_open_dual(self) -> None:
@@ -696,7 +706,87 @@ class PSVAPMainWindow(QMainWindow):
         if not topo: return
         traj, _ = QFileDialog.getOpenFileName(self, "SELECT TRAJECTORY — STEP 2 OF 2", "", _TRAJ_FILTERS)
         if not traj: return
+        if self._open_path(traj, topology_path=topo):
+            return
         self.controller.load_topology_and_trajectory(topo, traj)
+
+    def _open_path(self, path: str, topology_path: str | None = None) -> bool:
+        if Path(path).suffix.lower() == ".bin":
+            return self._open_binary_path(path, topology_path=topology_path)
+
+        if topology_path is None:
+            self.controller.load_file(path)
+        return False
+
+    def _open_binary_path(
+        self,
+        path: str,
+        *,
+        topology_path: str | None = None,
+    ) -> bool:
+        from PSVAP.gui.dialogs.binary_config_dialog import BinaryConfigDialog
+        from PSVAP.io.binary_parser import (
+            format_mismatch_message,
+            inspect_binary_signature,
+            inspect_dumpcustom_header,
+        )
+
+        bin_path = Path(path)
+        mismatch = inspect_binary_signature(bin_path)
+        if mismatch is not None:
+            self._show_load_dialog_error(
+                format_mismatch_message(mismatch.format_name)
+            )
+            return True
+
+        dumpcustom = inspect_dumpcustom_header(bin_path)
+        if dumpcustom is not None:
+            topo = topology_path
+            if topo and Path(topo).suffix.lower() not in {".pdb", ".gro"}:
+                topo = None
+            self.controller.load_binary_file(bin_path, topo)
+            return True
+
+        topo = topology_path
+        if topo and Path(topo).suffix.lower() not in {".pdb", ".gro"}:
+            topo = None
+
+        if topo is None:
+            topo, _ = QFileDialog.getOpenFileName(
+                self,
+                "SELECT TOPOLOGY FOR RAW BINARY",
+                "",
+                _RAW_BINARY_TOPO_FILTERS,
+            )
+            if not topo:
+                return True
+
+        dlg = BinaryConfigDialog(bin_path, self)
+        if not dlg.exec():
+            return True
+
+        config = dlg.get_config()
+        if config is None:
+            return True
+
+        self.controller.load_binary_file(bin_path, topo, config)
+        return True
+
+    def _show_load_dialog_error(self, message: str) -> None:
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("LOAD ERROR")
+        dlg.setIcon(QMessageBox.Icon.Critical)
+        dlg.setText(
+            f"<pre style='font-family:Courier New;font-size:11px;color:{TEXT};'>"
+            f"{message}</pre>"
+        )
+        dlg.setStyleSheet(
+            f"QMessageBox {{ background-color: {PANEL}; }}"
+            f"QLabel {{ color: {TEXT}; }}"
+            f"QPushButton {{ background: {PANEL_ALT}; color: {TEXT_DIM}; "
+            f"border: 1px solid {BORDER}; padding: 6px 20px; }}"
+        )
+        dlg.exec()
 
     @Slot()
     def _on_reset_camera(self) -> None:

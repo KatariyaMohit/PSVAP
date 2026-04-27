@@ -22,6 +22,7 @@ from PySide6.QtCore import QThread, Signal
 
 from PSVAP.core.system_model import SystemMetadata
 from PSVAP.io.base_parser import detect_parser
+from PSVAP.io.binary_parser import BinaryParser, RawBinaryConfig
 
 
 class LoaderWorker(QThread):
@@ -35,7 +36,7 @@ class LoaderWorker(QThread):
     progress(percent)
     """
 
-    finished: Signal = Signal(list, list, object)
+    finished: Signal = Signal(object, object, object)
     error:    Signal = Signal(str)
     progress: Signal = Signal(int)
 
@@ -44,21 +45,36 @@ class LoaderWorker(QThread):
         *,
         traj_path: Path,
         topo_path: Path | None = None,
+        binary_config: RawBinaryConfig | None = None,
     ) -> None:
         super().__init__()
         self._traj_path = traj_path
         self._topo_path = topo_path
+        self._binary_config = binary_config
 
     def run(self) -> None:
         try:
             self.progress.emit(5)
-            if self._topo_path is not None:
+            if self._traj_path.suffix.lower() == ".bin" or self._binary_config is not None:
+                self._load_binary_file()
+            elif self._topo_path is not None:
                 self._load_topology_and_trajectory()
             else:
                 self._load_single_file()
         except Exception as exc:
             import traceback
             self.error.emit(f"{exc}\n\n{traceback.format_exc()}")
+
+    def _load_binary_file(self) -> None:
+        parser = BinaryParser(
+            binary_config=self._binary_config,
+            topology_path=self._topo_path,
+            progress_callback=self.progress.emit,
+        )
+        self.progress.emit(10)
+        atoms, traj_frames, metadata = parser.parse(self._traj_path)
+        self.progress.emit(100)
+        self.finished.emit(atoms, traj_frames, metadata)
 
     def _load_single_file(self) -> None:
         parser = detect_parser(self._traj_path)
@@ -76,6 +92,8 @@ class LoaderWorker(QThread):
         - topo=.data, traj=.lammpstrj
         - topo=.gro, traj=.xtc/.trr
         - topo=.pdb, traj=.dcd
+        - topo=.top/.itp/.tpr, traj=.xtc/.trr
+        - topo=.top/.itp/.tpr, traj=.cpt
         etc.
         """
         topo_ext = self._topo_path.suffix.lower()
@@ -93,6 +111,11 @@ class LoaderWorker(QThread):
         if traj_ext in {".xtc", ".trr"}:
             from PSVAP.io.gromacs_parser import GromacsParser
             _a, traj_frames, md_traj = GromacsParser().parse(
+                self._traj_path, topology_path=self._topo_path
+            )
+        elif traj_ext == ".cpt":
+            from PSVAP.io.gromacs_binary_parser import GromacsRuntimeParser
+            _a, traj_frames, md_traj = GromacsRuntimeParser().parse(
                 self._traj_path, topology_path=self._topo_path
             )
         elif traj_ext in {".nc", ".ncdf", ".mdcrd", ".crd", ".rst7", ".rst"}:

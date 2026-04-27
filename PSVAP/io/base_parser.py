@@ -68,6 +68,18 @@ def detect_parser(path: Path) -> BaseParser:
         from PSVAP.io.gromacs_parser import GromacsParser
         return GromacsParser()
 
+    if ext == ".top":
+        from PSVAP.io.gromacs_top_parser import GromacsTopParser
+        return GromacsTopParser()
+
+    if ext == ".itp":
+        from PSVAP.io.gromacs_itp_parser import GromacsItpParser
+        return GromacsItpParser()
+
+    if ext in {".tpr", ".cpt"}:
+        from PSVAP.io.gromacs_binary_parser import GromacsRuntimeParser
+        return GromacsRuntimeParser()
+
     # ── PDB ───────────────────────────────────────────────────────────
     if ext == ".pdb":
         from PSVAP.io.pdb_parser import PDBParser
@@ -88,6 +100,10 @@ def detect_parser(path: Path) -> BaseParser:
         from PSVAP.io.dcd_parser import DCDParser
         return DCDParser()
 
+    if ext == ".bin":
+        from PSVAP.io.binary_parser import BinaryParser
+        return BinaryParser()
+
     # ── XYZ ───────────────────────────────────────────────────────────
     if ext == ".xyz":
         from PSVAP.io.xyz_parser import XYZParser
@@ -102,8 +118,8 @@ def detect_parser(path: Path) -> BaseParser:
         f"Unsupported file format: '{path.name}'\n"
         f"Supported extensions: "
         ".lammpstrj .traj .data .lammps "
-        ".gro .xtc .trr "
+        ".gro .xtc .trr .top .itp .tpr .cpt "
         ".pdb .cif .mmcif "
         ".nc .ncdf .mdcrd .crd .rst7 .rst "
-        ".dcd .xyz .mol2 .sdf .mol"
+        ".dcd .bin .xyz .mol2 .sdf .mol"
     )

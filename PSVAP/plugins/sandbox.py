@@ -27,6 +27,8 @@ import sys
 import traceback
 from contextlib import redirect_stdout
 from typing import Callable
+from RestrictedPython import compile_restricted
+from RestrictedPython.Guards import safe_builtins, guarded_iter_unpack_sequence # <--- Add this
 
 
 # ── Augmented assignment helper ───────────────────────────────────────────
@@ -115,17 +117,10 @@ def _run_with_restricted_python(
     safe_builtins,
 ) -> None:
     """
-    Execute script using RestrictedPython compiler.
-
-    Key design decision — we build the execution globals from scratch
-    rather than using safe_globals as a base. safe_globals sets
-    _getattr_ to a restrictive guard that blocks numpy attribute access
-    (e.g. arr.mean()). By building from scratch and setting all guard
-    functions ourselves to permissive implementations, we allow numpy
-    and other injected modules to be used fully while still preventing
-    import of dangerous modules.
+    Execute script using RestrictedPython compiler with permissive guards.
+    This version includes a fix for the 3-argument unpacking TypeError.
     """
-    # Compile with RestrictedPython's safe AST transformer
+    # 1. Compile with RestrictedPython's safe AST transformer
     try:
         code = compile_restricted(script, filename="<plugin>", mode="exec")
     except SyntaxError as exc:
@@ -136,8 +131,7 @@ def _run_with_restricted_python(
         callback("COMPILE ERROR: RestrictedPython could not compile the script.")
         return
 
-    # Build safe builtins — start from RestrictedPython's safe set,
-    # then add commonly needed names that are safe
+    # 2. Build safe builtins
     safe_builtins_dict = dict(safe_builtins)
     _safe_names = (
         "abs", "len", "min", "max", "sum", "range",
@@ -147,53 +141,59 @@ def _run_with_restricted_python(
         "round", "divmod", "pow", "hex", "oct", "bin",
         "isinstance", "issubclass", "type", "repr",
         "any", "all", "next", "iter",
+        "getattr", "hasattr", "dir", "id", "hash", "print" 
     )
+    
     _builtins_source = __builtins__ if isinstance(__builtins__, dict) else vars(__builtins__)
     for name in _safe_names:
         if name in _builtins_source:
             safe_builtins_dict[name] = _builtins_source[name]
 
-    # Build execution environment from scratch.
-    # We do NOT use dict(safe_globals) as base because safe_globals
-    # sets _getattr_ to None which blocks all attribute access on
-    # objects like numpy arrays.
+    # 3. Setup Master Guards
+    from RestrictedPython.Guards import guarded_iter_unpack_sequence
+    
+    # FIX: Added _getiter_=None to handle the 3rd argument passed by the compiler
+    def psvap_unpack(it, spec, _getiter_=None):
+        return guarded_iter_unpack_sequence(it, spec, iter)
+
     restricted_globals: dict = {
         "__builtins__": safe_builtins_dict,
         "__name__":     "__plugin__",
         "__doc__":      None,
+        
+        "_getattr_":         getattr,
+        "_getitem_":         lambda obj, key: obj[key],
+        "_getiter_":         iter,
+        "_unpack_sequence_": psvap_unpack,      
+        "_iter_unpack_sequence_": psvap_unpack, 
+        "_write_":           lambda obj: obj,   
+        "_inplacevar_":      _inplace_op,       
+        "_print_":           _make_print_func(callback)
     }
 
-    # Inject plugin API globals (np, get_atoms, log, etc.)
-    # Only inject non-dunder names to avoid overwriting our guards
+    # 4. Inject plugin API and user-defined globals
     for k, v in plugin_globals.items():
-        restricted_globals[k] = v
+        if not k.startswith('__'):
+            restricted_globals[k] = v
 
-    # Set RestrictedPython guard functions LAST so nothing above
-    # can overwrite them. These are the hooks RestrictedPython's
-    # compiled code calls at runtime:
-    #   _getattr_(obj, name)    — attribute access:  obj.name
-    #   _getitem_(obj, key)     — subscript access:  obj[key]
-    #   _getiter_(obj)          — iteration:         for x in obj
-    #   _write_(obj)            — assignment target: obj = ...
-    #   _inplacevar_(op, x, y)  — augmented assign:  x += y
-    #   _print_(...)            — print() calls
-    restricted_globals["_getattr_"]    = getattr
-    restricted_globals["_getitem_"]    = lambda obj, key: obj[key]
-    restricted_globals["_getiter_"]    = iter
-    restricted_globals["_write_"]      = lambda obj: obj
-    restricted_globals["_inplacevar_"] = _inplace_op
-    restricted_globals["_print_"]      = _make_print_func(callback)
+    # 5. Setup Secure Import Logic
+    def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == 'numpy' or name.startswith('numpy.'):
+            import numpy
+            return numpy
+        raise ImportError(f"SECURITY ALERT: Importing '{name}' is forbidden.")
+    
+    restricted_globals['__builtins__']['__import__'] = safe_import
 
+    # 6. Execute with standard output redirection
     buf = _CallbackWriter(callback)
-    restricted_locals: dict = {}
-
     try:
+        from contextlib import redirect_stdout
         with redirect_stdout(buf):
-            exec(code, restricted_globals, restricted_locals)  # noqa: S102
+            exec(code, restricted_globals)
     except Exception as exc:
         callback(f"RUNTIME ERROR: {type(exc).__name__}: {exc}")
-        callback(_format_traceback())
-
+        callback(_format_traceback())    
 
 def _run_with_limited_exec(
     script: str,

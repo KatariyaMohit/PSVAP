@@ -24,6 +24,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from PSVAP.core.selection import SelectionParseError, parse_selection
 from PSVAP.core.system_model import SystemModel
+from PSVAP.io.binary_parser import RawBinaryConfig
 from PSVAP.visualization.viz_engine import VisualizationEngine
 
 
@@ -52,6 +53,22 @@ class ApplicationController(QObject):
         from PSVAP.app.loader_worker import LoaderWorker
         self._start_worker(LoaderWorker(traj_path=Path(path)))
 
+    def load_binary_file(
+        self,
+        traj_path: str | Path,
+        topo_path: str | Path | None = None,
+        binary_config: RawBinaryConfig | None = None,
+    ) -> None:
+        from PSVAP.app.loader_worker import LoaderWorker
+
+        self._start_worker(
+            LoaderWorker(
+                traj_path=Path(traj_path),
+                topo_path=Path(topo_path) if topo_path is not None else None,
+                binary_config=binary_config,
+            )
+        )
+
     def load_topology_and_trajectory(
         self,
         topo_path: str | Path,
@@ -70,7 +87,7 @@ class ApplicationController(QObject):
         self.load_started.emit("Loading file…")
         self._worker.start()
 
-    @Slot(list, list, object)
+    @Slot(object, object, object)
     def _on_load_finished(self, atoms, traj_frames, metadata) -> None:
         self.model.set_data(atoms=atoms, trajectory=traj_frames, metadata=metadata)
         n  = self.model.n_frames()
